@@ -17,10 +17,11 @@ class Command(BaseCommand):
         if options['charts']:
             self.stdout.write('Starting to scrape movies from CSFD charts')
             max_pages = options['max_pages']
-            charts_url = f"{scraper.base_url}"
+            charts_url = f"{scraper.magic_url}"
             movie_links = scraper.fetch_movie_links(charts_url, max_pages)
             self.stdout.write(self.style.SUCCESS(f'Finished scraping {len(movie_links)} movies from charts'))
             print(movie_links)
+            # start asynchronously scraping movies
             return
 
         if options['movie']:

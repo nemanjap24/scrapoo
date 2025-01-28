@@ -11,7 +11,7 @@ class CSFDScraper:
     def __init__(self):
         self.base_url = os.getenv('BASE_URL')
         self.magic_url = os.getenv('MAGIC_URL')
-        self.request_delay = int(os.getenv('REQUEST_DELAY', 2))
+        self.request_delay = float(os.getenv('REQUEST_DELAY', 2))
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (compatible; ScrapooCrawler/1.0; +https://github.com/username/scrapoo)'
@@ -33,6 +33,8 @@ class CSFDScraper:
         soup = self._make_request(movie_url)
         if not soup:
             return None
+    
+        csfd_id = movie_url.split('film/',1)[-1].split('-',1)[0]
 
         # Extract basic movie data
         title_elem = soup.select_one('h1')
@@ -41,16 +43,13 @@ class CSFDScraper:
 
         # Extract title and year
         title_text = title_elem.text.strip()
+        title = title_text
         year = None
-        if '(' in title_text and ')' in title_text:
-            title = title_text[:title_text.rfind('(')].strip()
-            year_match = title_text[title_text.rfind('(')+1:title_text.rfind(')')]
-            try:
-                year = int(year_match)
-            except ValueError:
-                pass
-        else:
-            title = title_text
+
+        year_elem = soup.select_one('div.origin span')
+        year = year_elem.text.strip(', ')
+        print(year)
+
 
         # Extract description
         plot_elem = soup.select_one('div.plot-full')
@@ -77,21 +76,24 @@ class CSFDScraper:
         creators_elem = soup.select_one('div.creators')
         directors = []
         actors = []
+        # print(creators_elem)
         if creators_elem:
             # Extract directors
-            director_section = creators_elem.find('div', string=lambda text: 'Režie:' in str(text) if text else False)
+            director_section = creators_elem.find('h4', string=lambda text: 'Réžia:' in str(text) if text else False)
             if director_section:
+                director_section = director_section.find_parent('div')
                 director_links = director_section.find_next('span').find_all('a')
                 directors = [link['href'].split('/')[-1] for link in director_links if '/tvurce/' in link['href']]
 
             # Extract actors
-            actor_section = creators_elem.find('div', string=lambda text: 'Hrají:' in str(text) if text else False)
+            actor_section = creators_elem.find('h4', string=lambda text: 'Hrajú:' in str(text) if text else False)
             if actor_section:
+                actor_section = actor_section.find_parent('div')
                 actor_links = actor_section.find_next('span').find_all('a')
-                actors = [link['href'].split('/')[-1] for link in actor_links if '/tvurce/' in link['href']][:10]  # Limit to top 10 actors
-
+                actors = [link['href'].split('/')[-1] for link in actor_links if '/tvorca/' in link['href']][:10]  # Limit to top 10 actors
+                # print(actors)
         movie_data = {
-            'csfd_id': movie_url.split('/')[-1],
+            'csfd_id': csfd_id,
             'title': title,
             'year': year,
             'description': description,
@@ -126,14 +128,17 @@ class CSFDScraper:
             movie, created = Movie.objects.update_or_create(
                 csfd_id=movie_data['csfd_id'],
                 defaults={
+                    'csfd_id': movie_data['csfd_id'],
                     'title': movie_data['title'],
                     'year': movie_data['year'],
                     'description': movie_data['description'],
                     'genres': movie_data['genres'],
                     'rating': movie_data['rating'],
-                    'poster_url': movie_data['poster_url']
+                    'poster_url': movie_data['poster_url'],
                 }
+
             )
+            # movie.actors.set(movie_data['actors']) # Set many-to-many actors
             return movie
         except Exception as e:
             print(f"Error saving movie {movie_data['csfd_id']}: {str(e)}")
@@ -174,6 +179,7 @@ class CSFDScraper:
             link = movie.find('a', class_='film-title-name', href=True)
             if link and link['href']:
                 movie_url = f"{self.base_url}{link['href']}"
+                print(movie_url)
                 movie_data = self.scrape_movie(movie_url)
                 if movie_data:
                     movie = self.save_movie(movie_data)
