@@ -3,6 +3,9 @@
 .idea/modules.xml
 .idea/trae-scrapoo.iml
 .idea/inspectionProfiles/profiles_settings.xml
+.env
 */__pycache__/
 */*/__pycache__/
 */*/*/__pycache__/
+.DS_Store
+*.json
