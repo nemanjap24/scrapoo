@@ -84,6 +84,31 @@ class TestSitemapCollector(unittest.TestCase):
         self.assertEqual(len(films), 2)
         self.assertEqual(len(creators), 1)
 
+    def test_normalization_base_over_episodes(self):
+        # base page + episode + season should result in only base kept
+        urls = [
+            'https://www.csfd.sk/film/33226-lucifer/prehlad/',
+            'https://www.csfd.sk/film/33226-lucifer/426854-pilot/prehlad/',
+            'https://www.csfd.sk/film/33226-lucifer/426852-season-1/prehlad/'
+        ]
+        norm = sc.normalize_film_urls(urls)
+        self.assertIn('https://www.csfd.sk/film/33226-lucifer/prehlad/', norm)
+        # episodes and season pages should be dropped
+        self.assertNotIn('https://www.csfd.sk/film/33226-lucifer/426854-pilot/prehlad/', norm)
+        self.assertNotIn('https://www.csfd.sk/film/33226-lucifer/426852-season-1/prehlad/', norm)
+
+    def test_normalization_season_over_episodes_no_base(self):
+        # no base, but seasons present -> keep seasons, drop episode pages
+        urls = [
+            'https://www.csfd.sk/film/1384607-na-vlnach-jadranu/1400657-epizoda-1/prehlad/',
+            'https://www.csfd.sk/film/1384607-na-vlnach-jadranu/1400658-epizoda-2/prehlad/',
+            'https://www.csfd.sk/film/1384607-na-vlnach-jadranu/1400650-season-1/prehlad/'
+        ]
+        norm = sc.normalize_film_urls(urls)
+        # keep season only
+        self.assertIn('https://www.csfd.sk/film/1384607-na-vlnach-jadranu/1400650-season-1/prehlad/', norm)
+        self.assertNotIn('https://www.csfd.sk/film/1384607-na-vlnach-jadranu/1400657-epizoda-1/prehlad/', norm)
+
 
 if __name__ == '__main__':
     unittest.main()

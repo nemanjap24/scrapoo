@@ -35,6 +35,88 @@ except Exception:  # pragma: no cover - fallback
 ROBOT_URL = "https://www.csfd.sk/robots.txt"
 
 
+def _series_key_from_url(url: str) -> Optional[str]:
+    """Extract the series key (first segment after /film/) or None."""
+    from urllib.parse import urlparse
+    p = urlparse(url).path
+    parts = [seg for seg in p.split('/') if seg]
+    try:
+        idx = parts.index('film')
+    except ValueError:
+        return None
+    if idx + 1 < len(parts):
+        return parts[idx + 1]
+    return None
+
+
+def _is_base_film_url(url: str, series_key: str) -> bool:
+    # Strict match: only treat URLs like
+    # https://<host>/film/<id-movie-name>/prehlad/  (optional trailing slash)
+    # as the base page. This avoids matching pages that have extra segments
+    # between the movie slug and 'prehlad' (e.g. '/film/<slug>/season/..../prehlad/').
+    import re
+    pattern = re.compile(r"^https?://[^/]+/film/[^/]+/prehlad/?$", re.IGNORECASE)
+    return bool(pattern.match(url))
+
+
+def normalize_film_urls(urls: Iterable[str]) -> Set[str]:
+    """Normalize film URLs to avoid duplicates:
+
+    - Group URLs by series key (first segment after /film/).
+    - If the group contains the base series page (no extra path or next segment 'prehlad'), keep only that.
+    - Else if group contains season pages (segment contains 'season'), keep season pages and drop episode pages.
+    - Else keep all pages in the group (likely episode-only series).
+    """
+    from urllib.parse import urlparse
+
+    urls = set(urls)
+    groups: dict[str, Set[str]] = {}
+    others: Set[str] = set()
+    for u in urls:
+        key = _series_key_from_url(u)
+        if key:
+            groups.setdefault(key, set()).add(u)
+        else:
+            others.add(u)
+
+    result: Set[str] = set(others)
+    for key, grp in groups.items():
+        # find base
+        base = None
+        for u in grp:
+            if _is_base_film_url(u, key):
+                base = u
+                break
+
+        if base:
+            result.add(base)
+            continue
+
+        # no base -> check for season pages
+        seasons = set()
+        episodes = set()
+        for u in grp:
+            path = urlparse(u).path
+            parts = [seg for seg in path.split('/') if seg]
+            # segment after series key
+            try:
+                idx = parts.index('film')
+                seg = parts[idx + 2] if idx + 2 < len(parts) else ''
+            except Exception:
+                seg = ''
+            if 'season' in seg.lower():
+                seasons.add(u)
+            else:
+                episodes.add(u)
+
+        if seasons:
+            result.update(seasons)
+        else:
+            result.update(episodes)
+
+    return result
+
+
 def fetch_text(url: str, timeout: int = 15) -> str:
     """Fetch URL and return text. Uses requests if available, otherwise urllib.
 
@@ -353,23 +435,32 @@ def main(argv: List[str] | None = None) -> int:
                 print(f"Warning: sitemap {s} raised during processing: {e}", file=sys.stderr)
                 continue
             if res:
-                if res:
-                    urls.update(res)
+                urls.update(res)
 
     total = len(urls)
     film_urls = [u for u in urls if 'www.csfd.sk/film/' in u]
+    # Normalize film URLs to avoid counting episodes/seasons as duplicates
+    normalized_films = normalize_film_urls(film_urls)
     logging.info("Total page URLs found: %d", total)
-    logging.info("Film URLs (containing 'www.csfd.sk/film/'): %d", len(film_urls))
+    logging.info("Film URLs (containing 'www.csfd.sk/film/'): %d (normalized: %d)", len(film_urls), len(normalized_films))
 
     if args.out:
         write_urls = sorted(urls)
         films = [u for u in write_urls if '/film/' in u]
         creators = [u for u in write_urls if '/tvorca/' in u]
+        # apply normalization when considering films to write
+        normalized_films = normalize_film_urls(films)
 
         if args.only_film_creator:
-            filtered = sorted(set(films) | set(creators))
+            filtered = sorted(set(normalized_films) | set(creators))
+        elif args.only_films:
+            filtered = sorted(set(normalized_films))
+        elif args.only_creators:
+            filtered = sorted(set(creators))
         else:
-            filtered = write_urls
+            # if not filtering, include all urls but replace film urls with normalized set to avoid duplicates
+            non_films = [u for u in write_urls if '/film/' not in u]
+            filtered = sorted(set(non_films) | set(normalized_films))
 
         # rotate existing file if requested -> move into archive/
         out_path = Path(args.out)
@@ -388,9 +479,10 @@ def main(argv: List[str] | None = None) -> int:
             if args.format == 'json':
                 with open(args.out, 'w', encoding='utf-8') as f:
                     if args.only_film_creator:
-                        json.dump({'films': sorted(set(films)), 'creators': sorted(set(creators))}, f, ensure_ascii=False, indent=2)
+                        # Save normalized film URLs, not raw ones
+                        json.dump({'films': sorted(set(normalized_films)), 'creators': sorted(set(creators))}, f, ensure_ascii=False, indent=2)
                     else:
-                        json.dump({'urls': filtered, 'films_count': len(films), 'creators_count': len(creators)}, f, ensure_ascii=False, indent=2)
+                        json.dump({'urls': filtered, 'films_count': len(normalized_films), 'creators_count': len(creators)}, f, ensure_ascii=False, indent=2)
             else:  # csv
                 # CSV will contain columns: url,type where type is film/creator/other
                 with open(args.out, 'w', newline='', encoding='utf-8') as f:
@@ -401,7 +493,7 @@ def main(argv: List[str] | None = None) -> int:
                         writer.writerow([u, t])
 
             logging.info("Wrote %d URLs to %s", len(filtered), args.out)
-            logging.info("Film URLs: %d; Creator URLs: %d", len(films), len(creators))
+            logging.info("Film URLs (normalized): %d; Creator URLs: %d", len(normalized_films), len(creators))
         except Exception as e:
             logging.warning("failed to write output file %s: %s", args.out, e)
 
