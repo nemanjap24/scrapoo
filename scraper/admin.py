@@ -1,13 +1,14 @@
 from django.contrib import admin
-from .models import Movie, Person
+from .models import Person, Film
 
-@admin.register(Movie)
-class MovieAdmin(admin.ModelAdmin):
-    list_display = ('title', 'year', 'rating')
-    list_filter = ('year', 'genres')
-    search_fields = ('title', 'description')
+
+@admin.register(Film)
+class FilmAdmin(admin.ModelAdmin):
+    list_display = ('title', 'release_year', 'rating')
+    list_filter = ('release_year', 'language', 'country')
+    search_fields = ('title', 'original_title', 'url')
 
 @admin.register(Person)
 class PersonAdmin(admin.ModelAdmin):
     list_display = ('name', 'birth_date')
-    search_fields = ('name', 'bio')
+    search_fields = ('name',)
