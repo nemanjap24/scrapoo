@@ -2,6 +2,40 @@
 
 Standalone script/module to collect URLs from robots.txt -> sitemaps -> nested sitemaps.
 
+## FastAPI + Scrapy stack (WIP)
+
+The project is migrating to a FastAPI + Scrapy + Celery architecture. To run the local stack
+with Docker Compose (API, Celery worker, PostgreSQL, Redis):
+
+```bash
+docker compose up --build
+```
+
+- API: http://localhost:8000 (FastAPI docs at `/docs`).
+- PostgreSQL: exposed on port 5432 (default credentials in `docker-compose.yml`).
+- Redis: exposed on port 6379 for Celery broker/result backend.
+
+Set custom secrets via `.env` or override the compose environment variables before running.
+
+### Triggering Scrapy crawls
+
+Once the stack is up, you can enqueue CSFD crawls directly from the API:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/movies/scrape \
+	-H "Content-Type: application/json" \
+	-d '{
+				"urls": ["https://www.csfd.sk/rebricky/vlastny-vyber/?page=1"],
+				"max_listing_pages": 2,
+				"include_people": false
+			}'
+```
+
+The endpoint responds with the Celery task id plus the seeds that were queued. The worker
+scrapes each film detail page via Scrapy and stores/updates the resulting metadata in PostgreSQL.
+
+## Legacy sitemap collector module
+
 Features
 
 - Fetches `robots.txt` and discovers sitemap files (supports nested sitemapindex files).
