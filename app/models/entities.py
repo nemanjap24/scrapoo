@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from tortoise import fields
 from tortoise.models import Model
 
@@ -5,6 +7,7 @@ from tortoise.models import Model
 class Country(Model):
     id = fields.IntField(pk=True)
     name = fields.CharField(max_length=50, null=True)
+    films: fields.ReverseRelation["Film"]
 
     class Meta:
         table = "country"
@@ -16,6 +19,7 @@ class Country(Model):
 class Genre(Model):
     id = fields.IntField(pk=True)
     name = fields.CharField(max_length=60, null=True)
+    films: fields.ReverseRelation["Film"]
 
     class Meta:
         table = "genre"
@@ -30,6 +34,7 @@ class Person(Model):
     birth_date = fields.DateField(null=True)
     url = fields.CharField(max_length=100, null=True)
     occupation = fields.CharField(max_length=50, null=True)
+    film_links: fields.ReverseRelation["PersonInFilm"]
 
     class Meta:
         table = "person"
@@ -53,6 +58,7 @@ class Film(Model):
         "models.Genre", related_name="films", null=True
     )
     url = fields.CharField(max_length=100, null=True)
+    person_links: fields.ReverseRelation["PersonInFilm"]
 
     class Meta:
         table = "film"
@@ -73,7 +79,7 @@ class PersonInFilm(Model):
     role = fields.CharField(max_length=30, null=True)
 
     class Meta:
-        table = "role_in_film"
+        table = "person_in_film"
         unique_together = ("film", "person")
 
     def __str__(self) -> str:  # pragma: no cover

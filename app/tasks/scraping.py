@@ -29,10 +29,10 @@ def run_scraping_job(
         request_delay=settings.REQUEST_DELAY,
     )
 
-    saved_movies = asyncio.run(_persist_movies(batch.movies))
+    saved_movies = asyncio.run(_persist_films(batch.movies))
     return {
         "seeds": seeds,
-        "movies_saved": saved_movies,
+        "films_saved": saved_movies,
         "people_collected": len(batch.people),
     }
 
@@ -48,7 +48,7 @@ def _normalize_urls(urls: Sequence[str]) -> list[str]:
     return list(dict.fromkeys(normalized))
 
 
-async def _persist_movies(movies: Iterable[dict]) -> int:
+async def _persist_films(movies: Iterable[dict]) -> int:
     if not movies:
         return 0
 

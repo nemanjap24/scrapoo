@@ -24,4 +24,3 @@ class FilmRead(FilmBase):
 
     class Config:
         from_attributes = True
-*** End of File
