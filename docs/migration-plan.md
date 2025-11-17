@@ -1,6 +1,6 @@
 # Migration Plan: Django + BeautifulSoup → FastAPI + Scrapy + Tortoise ORM
 
-_Last updated: 2025-11-16_
+_Last updated: 2025-11-17_
 
 ## Goals
 
@@ -18,17 +18,18 @@ _Last updated: 2025-11-16_
 
 ## Milestones
 
-1. **Scaffold new stack (current step)**
+1. **Scaffold new stack (complete)**
 
-   - Add FastAPI app skeleton (`app/`), Tortoise ORM models, config, and health endpoint.
-   - Create Scrapy project shell with pipelines, settings, and Celery wiring stubs.
-   - Produce cleaned `requirements.txt`, Docker Compose draft, and developer docs.
+   - ✅ FastAPI app skeleton (`app/`), Tortoise ORM models, config, and health endpoint are in place.
+   - ✅ Scrapy spider, Celery worker, and persistence services run via Docker Compose (API + worker + Postgres + Redis).
+   - ✅ Requirements, environment docs, and developer bootstrap instructions landed in the repo.
 
-2. **Feature Parity (API + scraping)**
+2. **Feature Parity (API + scraping) — in progress**
 
-   - Reimplement core endpoints (movies, people, analytics summaries) in FastAPI.
-   - Port BeautifulSoup logic into Scrapy spiders + pipelines storing via Tortoise ORM.
-   - Introduce Celery tasks for scheduled crawls and job status tracking.
+   - ✅ Movies endpoint backed by Tortoise models with nested serializers.
+   - ✅ Scrapy crawler feeds Celery task `tasks.scraping.scrape_movies`, persisting films/genres/people.
+   - ⏳ People endpoints + analytics summaries still pending.
+   - ⏳ Scheduling + job status tracking to follow once API surface is stable.
 
 3. **Analytics & visualization**
 
@@ -53,7 +54,7 @@ _Last updated: 2025-11-16_
 
 ## Next Actions
 
-1. Land FastAPI + Tortoise skeleton (health endpoint) on `migrate-to-new-architecture`.
-2. Commit cleaned requirements and developer run instructions.
-3. Configure local PostgreSQL (docker-compose) and connection secrets.
-4. Begin Scrapy project bootstrap with Celery orchestration stubs.
+1. Finish people- and analytics-focused FastAPI endpoints, including serializers and tests.
+2. Add crawl scheduling + job status tracking (Celery beat or custom scheduler) with API surface for monitoring.
+3. Introduce analytics/visualization service (NetworkX metrics + export endpoints) with seed datasets.
+4. Harden CI/CD: pytest suite for API + tasks, linting, and crawler smoke test in Docker.
