@@ -7,7 +7,7 @@ plain-Python payloads.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional
 
 import scrapy
 from scrapy.crawler import CrawlerProcess
@@ -57,6 +57,7 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
         self.include_people = include_people
         self._listing_pages_seen = 0
         self._seen_movies: set[str] = set()
+        self._emitted_people: set[str] = set()
 
     def parse(self, response: scrapy.http.Response):  # type: ignore[override]
         url = response.url
@@ -93,7 +94,8 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
         self._seen_movies.add(csfd_id)
 
         title = (response.css("h1::text").get() or "").strip()
-        original_title, country_name = self._extract_primary_name_metadata(response)
+        country_name = self._extract_country_from_origin(response) or self._extract_country_from_names(response)
+        original_title = self._extract_original_title(response, country_name)
         year_text = response.css("div.origin span::text").get()
         year = year_text.strip().strip(", ") if year_text else None
         description = (response.css("div.plot-full::text").get() or "").strip()
@@ -109,11 +111,20 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
 
         poster_url = response.css("div.film-posters img::attr(src)").get()
         creators = response.css("div.creators")
-        directors = self._extract_people(creators, labels=("Réžia", "Režie", "Réžia:", "Režie:"))
-        actors = self._extract_people(
+        director_entries = self._extract_people(
+            response,
+            creators,
+            labels=("Réžia", "Režie", "Réžia:", "Režie:"),
+            role="director",
+        )
+        actor_entries = self._extract_people(
+            response,
             creators,
             labels=("Hrajú", "Hrají", "Hrajú:", "Hrají:"),
+            role="actor",
         )
+        directors = [person["slug"] for person in director_entries]
+        actors = [person["slug"] for person in actor_entries]
 
         movie = {
             "item_type": "movie",
@@ -130,6 +141,8 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
             "actors": actors,
             "country": country_name,
         }
+        for person in director_entries + actor_entries:
+            self._emit_person_stub(person)
         self._emit(movie)
         yield movie
 
@@ -194,18 +207,42 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
                 return slug.strip("/")
         return None
 
-    def _extract_primary_name_metadata(self, response: scrapy.http.Response) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_original_title(
+        self,
+        response: scrapy.http.Response,
+        country_name: Optional[str],
+    ) -> Optional[str]:
         entries = response.css("ul.film-names li")
         if not entries:
-            return None, self._extract_country_from_origin(response)
-        primary = entries[0]
-        original_title = self._clean_original_title(primary)
-        country = primary.css("img.flag::attr(title)").get() or primary.css("img.flag::attr(alt)").get()
-        if country:
-            country = country.strip()
-        if not country:
-            country = self._extract_country_from_origin(response)
-        return original_title, country or None
+            return None
+        target = None
+        if country_name:
+            target = self._find_entry_by_country(entries, country_name)
+        if not target:
+            target = entries[0]
+        return self._clean_original_title(target)
+
+    @staticmethod
+    def _find_entry_by_country(entries, country_name: str):
+        normalized = country_name.strip()
+        if "/" in normalized:
+            normalized = normalized.split("/", 1)[0]
+        normalized = normalized.lower()
+        for entry in entries:
+            flag_title = entry.css("img.flag::attr(title)").get() or entry.css("img.flag::attr(alt)").get()
+            if not flag_title:
+                continue
+            flag_value = flag_title.strip().lower()
+            if flag_value == normalized:
+                return entry
+        return None
+
+    @staticmethod
+    def _extract_country_from_names(response: scrapy.http.Response) -> Optional[str]:
+        primary_flag = response.css("ul.film-names li img.flag::attr(title)").get()
+        if not primary_flag:
+            primary_flag = response.css("ul.film-names li img.flag::attr(alt)").get()
+        return primary_flag.strip() if primary_flag else None
 
     @staticmethod
     def _clean_original_title(entry) -> Optional[str]:
@@ -234,31 +271,107 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
         if not origin_parts:
             return None
         candidate = origin_parts[0]
+        if "/" in candidate:
+            candidate = candidate.split("/", 1)[0].strip()
         if "," in candidate:
             candidate = candidate.split(",", 1)[0].strip()
         return candidate or None
 
-    @staticmethod
-    def _extract_people(creators, labels: Iterable[str], limit: Optional[int] = None) -> List[str]:
+    def _extract_people(
+        self,
+        response: scrapy.http.Response,
+        creators,
+        labels: Iterable[str],
+        *,
+        role: str,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Optional[str]]]:
         if not creators:
             return []
         label_xpath = " or ".join([f"contains(., '{label}')" for label in labels])
-        section = creators.xpath(f".//div[h4[{label_xpath}]]")
-        if not section:
+        sections = creators.xpath(f".//div[h4[{label_xpath}]]")
+        if not sections:
             return []
-        links = section.xpath(".//a/@href").getall()
-        slugs: List[str] = []
+        links = sections.xpath(".//a")
+        people: List[Dict[str, str]] = []
         seen: set[str] = set()
-        for href in links:
-            slug = href.rstrip("/").split("/")[-1]
-            if slug:
-                if slug in seen:
-                    continue
-                seen.add(slug)
-                slugs.append(slug)
-            if limit and len(slugs) >= limit:
+        for link in links:
+            href = link.xpath("@href").get()
+            if not href:
+                continue
+            slug = self._extract_person_slug_from_href(href)
+            if not slug or slug in seen:
+                continue
+            seen.add(slug)
+            name = " ".join([text.strip() for text in link.xpath(".//text()").getall() if text.strip()])
+            url = response.urljoin(href)
+            people.append(
+                {
+                    "slug": slug,
+                    "name": name or None,
+                    "url": url,
+                    "role": role,
+                }
+            )
+            if limit and len(people) >= limit:
                 break
-        return slugs
+        return people
+
+    def _emit_person_stub(self, person: Dict[str, Optional[str]]) -> None:
+        slug = (person.get("slug") or "").strip()
+        if not slug or slug in self._emitted_people:
+            return
+        name = (person.get("name") or "").strip()
+        url = person.get("url") or self._build_person_url(slug)
+        role = (person.get("role") or "actor").title()
+        payload = {
+            "item_type": "person",
+            "csfd_id": slug,
+            "name": name or None,
+            "csfd_url": url,
+            "occupation": role,
+        }
+        self._emitted_people.add(slug)
+        self._emit(payload)
+
+    @staticmethod
+    def _build_person_url(slug: str) -> str:
+        base_url = str(settings.BASE_URL).rstrip("/")
+        return f"{base_url}/tvorca/{slug}/"
+
+    @staticmethod
+    def _extract_person_slug_from_href(href: str) -> Optional[str]:
+        """Return the slug portion from typical \n+        /tvorca/<slug>/prehlad/ style URLs."""
+
+        if not href:
+            return None
+        normalized = href.strip()
+        if not normalized:
+            return None
+        # Remove query/fragment noise without importing urlsplit at top-level repeatedly
+        for token in ("#", "?"):
+            if token in normalized:
+                normalized = normalized.split(token, 1)[0]
+        normalized = normalized.strip()
+        parts = [segment for segment in normalized.strip("/").split("/") if segment]
+        if not parts:
+            return None
+        try:
+            if "tvorca" in parts:
+                idx = parts.index("tvorca")
+            elif "tvurce" in parts:
+                idx = parts.index("tvurce")
+            else:
+                return None
+        except ValueError:
+            return None
+        slug_index = idx + 1
+        if slug_index >= len(parts):
+            return None
+        candidate = parts[slug_index].strip()
+        if not candidate or candidate == "prehlad":
+            return None
+        return candidate
 
 
 def crawl_movies(

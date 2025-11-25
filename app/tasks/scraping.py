@@ -163,36 +163,31 @@ def _coerce_film_payload(payload: dict) -> dict | None:
 async def _sync_genres(film: Film, names: Iterable[str] | None) -> None:
     if names is None:
         return
+    await film.genres.clear()
 
-    connection = Tortoise.get_connection("default")
-    await connection.execute_query("DELETE FROM film_genre WHERE film=$1", [film.id])
-
-    inserts: list[tuple[int, int]] = []
+    genre_objs: list[Genre] = []
     for raw in names:
         cleaned = (raw or "").strip()
         if not cleaned:
             continue
         genre_obj, _ = await Genre.get_or_create(name=cleaned)
-        inserts.append((film.id, genre_obj.id))
+        genre_objs.append(genre_obj)
 
-    if inserts:
-        await connection.execute_many(
-            "INSERT INTO film_genre (film, genre) VALUES ($1, $2)",
-            inserts,
-        )
+    if genre_objs:
+        await film.genres.add(*genre_objs)
 
 
 async def _sync_people(film: Film, slugs: Iterable[str] | None, *, role: str) -> None:
     if slugs is None:
         return
-    await PersonInFilm.filter(film=film, role=role).delete()
+    await PersonInFilm.filter(films=film, role=role).delete()
     for slug in slugs:
         person = await _get_or_create_person(slug, role)
         if not person:
             continue
         await PersonInFilm.get_or_create(
-            film=film,
-            person=person,
+            films=film,
+            persons=person,
             defaults={"role": role},
         )
 
@@ -207,7 +202,7 @@ async def _sync_country(film: Film, country_name: str | None) -> None:
     if film.country_id == country_obj.id:
         return
     film.country = country_obj
-    await film.save(update_fields=["country"])
+    await film.save(update_fields=["country_id"])
 
 
 async def _get_or_create_person(slug: str | None, role: str) -> Person | None:
