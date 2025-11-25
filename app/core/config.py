@@ -28,7 +28,8 @@ class Settings(BaseSettings):
         "MJSlK3EiVwblZQVjYPWuL3EipvV6J10fVzEcpzIwqT9lVwcoKK0"
     )
     SITEMAP_INDEX_URL: HttpUrl = "https://static.pmgstatic.com/sitemaps/www.csfd.sk/sitemap.xml"
-    REQUEST_DELAY: float = 0.2
+    REQUEST_DELAY: float = 0.0
+    SCRAPY_CONCURRENT_REQUESTS: int = 32
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -43,11 +44,11 @@ class Settings(BaseSettings):
         if value is None:
             return cls.model_fields["REQUEST_DELAY"].default
         if isinstance(value, (int, float)):
-            return float(value)
+            return max(0.0, float(value))
         cleaned = value.split("#", 1)[0].strip()
         if not cleaned:
             return cls.model_fields["REQUEST_DELAY"].default
-        return float(cleaned)
+        return max(0.0, float(cleaned))
 
     @model_validator(mode="after")
     def _ensure_database_url(self) -> "Settings":

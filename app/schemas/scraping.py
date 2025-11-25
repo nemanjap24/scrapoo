@@ -15,9 +15,15 @@ class ScrapeMoviesRequest(BaseModel):
         le=250,
         description="Maximum number of sitemap files to process once from_page is applied.",
     )
+    max_films: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=10000,
+        description="Upper bound for number of films to crawl; stops before max_pages if reached first.",
+    )
     include_people: bool = Field(
-        default=False,
-        description="Also crawl linked person pages when available.",
+        default=True,
+        description="Also crawl linked person pages (actors and directors).",
     )
     include_movies: bool = Field(
         default=True,
@@ -29,6 +35,7 @@ class ScrapeJobResponse(BaseModel):
     task_id: str
     from_page: Optional[int] = None
     max_pages: Optional[int] = None
+    max_films: Optional[int] = None
     include_people: bool
     include_movies: bool
     sitemaps: List[str] = Field(default_factory=list)

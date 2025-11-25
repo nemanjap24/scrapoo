@@ -53,12 +53,14 @@ async def enqueue_scrape(payload: ScrapeMoviesRequest) -> ScrapeJobResponse:
         sitemap_urls,
         payload.include_people,
         payload.include_movies,
+        payload.max_films,
     )
 
     return ScrapeJobResponse(
         task_id=task.id,
         from_page=payload.from_page,
         max_pages=payload.max_pages,
+        max_films=payload.max_films,
         include_people=payload.include_people,
         include_movies=payload.include_movies,
         sitemaps=sitemap_urls,

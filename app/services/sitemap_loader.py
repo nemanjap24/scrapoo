@@ -25,14 +25,16 @@ def expand_sitemaps(
     sitemap_urls: Sequence[str],
     *,
     include_movies: bool = True,
+    max_films: int | None = None,
 ) -> List[str]:
-    """Expand sitemap files into individual film URLs."""
+    """Expand sitemap files into individual film URLs, respecting optional limits."""
 
     if not include_movies or not sitemap_urls:
         return []
 
     seen: set[str] = set()
     film_urls: List[str] = []
+    limit = max_films if max_films and max_films > 0 else None
     for sitemap in sitemap_urls:
         xml_bytes = _fetch_bytes(sitemap)
         locs = _extract_locs(xml_bytes)
@@ -44,6 +46,8 @@ def expand_sitemaps(
                 continue
             seen.add(url)
             film_urls.append(url)
+            if limit and len(film_urls) >= limit:
+                return film_urls
     return film_urls
 
 

@@ -7,7 +7,7 @@ plain-Python payloads.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 import scrapy
 from scrapy.crawler import CrawlerProcess
@@ -53,7 +53,7 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
         super().__init__(*args, **kwargs)
         self.start_urls = list(start_urls)
         self.item_callback = item_callback
-        self.max_listing_pages = max(1, max_listing_pages)
+        self.max_listing_pages = max(0, max_listing_pages)
         self.include_people = include_people
         self._listing_pages_seen = 0
         self._seen_movies: set[str] = set()
@@ -93,6 +93,7 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
         self._seen_movies.add(csfd_id)
 
         title = (response.css("h1::text").get() or "").strip()
+        original_title, country_name = self._extract_primary_name_metadata(response)
         year_text = response.css("div.origin span::text").get()
         year = year_text.strip().strip(", ") if year_text else None
         description = (response.css("div.plot-full::text").get() or "").strip()
@@ -112,7 +113,6 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
         actors = self._extract_people(
             creators,
             labels=("Hrajú", "Hrají", "Hrajú:", "Hrají:"),
-            limit=10,
         )
 
         movie = {
@@ -120,6 +120,7 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
             "csfd_id": csfd_id,
             "csfd_url": response.url,
             "title": title,
+            "original_title": original_title or title,
             "year": year,
             "description": description,
             "genres": genres,
@@ -127,19 +128,31 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
             "poster_url": poster_url,
             "directors": directors,
             "actors": actors,
+            "country": country_name,
         }
         self._emit(movie)
         yield movie
 
         if self.include_people:
-            for slug in directors + actors:
+            for slug in directors:
                 yield response.follow(
                     url=response.urljoin(f"/tvorca/{slug}/"),
                     callback=self.parse_person,
-                    cb_kwargs={"fallback_slug": slug},
+                    cb_kwargs={"fallback_slug": slug, "role": "director"},
+                )
+            for slug in actors:
+                yield response.follow(
+                    url=response.urljoin(f"/tvorca/{slug}/"),
+                    callback=self.parse_person,
+                    cb_kwargs={"fallback_slug": slug, "role": "actor"},
                 )
 
-    def parse_person(self, response: scrapy.http.Response, fallback_slug: str | None = None):
+    def parse_person(
+        self,
+        response: scrapy.http.Response,
+        fallback_slug: str | None = None,
+        role: str | None = None,
+    ):
         csfd_id = fallback_slug or self._extract_person_id(response.url)
         name = (response.css("h1::text").get() or "").strip()
         birth_date = (response.css("div.birth-date::text").get() or "").strip()
@@ -152,6 +165,7 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
             "birth_date": birth_date or None,
             "bio": bio or None,
             "csfd_url": response.url,
+            "occupation": role.title() if role else None,
         }
         self._emit(person)
         yield person
@@ -180,19 +194,67 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
                 return slug.strip("/")
         return None
 
+    def _extract_primary_name_metadata(self, response: scrapy.http.Response) -> Tuple[Optional[str], Optional[str]]:
+        entries = response.css("ul.film-names li")
+        if not entries:
+            return None, self._extract_country_from_origin(response)
+        primary = entries[0]
+        original_title = self._clean_original_title(primary)
+        country = primary.css("img.flag::attr(title)").get() or primary.css("img.flag::attr(alt)").get()
+        if country:
+            country = country.strip()
+        if not country:
+            country = self._extract_country_from_origin(response)
+        return original_title, country or None
+
+    @staticmethod
+    def _clean_original_title(entry) -> Optional[str]:
+        raw_parts = entry.xpath("text()[normalize-space()]").getall() or []
+        if not raw_parts:
+            raw_parts = entry.xpath(".//text()[normalize-space()]").getall()
+        cleaned: List[str] = []
+        for part in raw_parts:
+            chunk = part.strip()
+            if not chunk:
+                continue
+            lowered = chunk.lower()
+            if "viac" in lowered or "menej" in lowered:
+                continue
+            cleaned.append(chunk)
+        if not cleaned:
+            return None
+        text = " ".join(cleaned)
+        if "(" in text:
+            text = text.split("(", 1)[0].strip()
+        return text or None
+
+    @staticmethod
+    def _extract_country_from_origin(response: scrapy.http.Response) -> Optional[str]:
+        origin_parts = [part.strip() for part in response.css("div.origin ::text").getall() if part.strip()]
+        if not origin_parts:
+            return None
+        candidate = origin_parts[0]
+        if "," in candidate:
+            candidate = candidate.split(",", 1)[0].strip()
+        return candidate or None
+
     @staticmethod
     def _extract_people(creators, labels: Iterable[str], limit: Optional[int] = None) -> List[str]:
         if not creators:
             return []
         label_xpath = " or ".join([f"contains(., '{label}')" for label in labels])
-        section = creators.xpath(f".//h4[{label_xpath}]")
+        section = creators.xpath(f".//div[h4[{label_xpath}]]")
         if not section:
             return []
-        links = section.xpath("../following-sibling::span[1]//a/@href").getall()
+        links = section.xpath(".//a/@href").getall()
         slugs: List[str] = []
+        seen: set[str] = set()
         for href in links:
             slug = href.rstrip("/").split("/")[-1]
             if slug:
+                if slug in seen:
+                    continue
+                seen.add(slug)
                 slugs.append(slug)
             if limit and len(slugs) >= limit:
                 break
@@ -203,18 +265,21 @@ def crawl_movies(
     start_urls: Iterable[str],
     *,
     max_listing_pages: int = 1,
-    include_people: bool = False,
+    include_people: bool = True,
     request_delay: Optional[float] = None,
 ) -> ScrapeBatch:
     """Run the CSFD spider and return collected payloads."""
 
     collector = _Collector()
+    download_delay = settings.REQUEST_DELAY if request_delay is None else request_delay
     spider_settings = {
         "LOG_ENABLED": False,
-        "CONCURRENT_REQUESTS": 8,
-        "DOWNLOAD_DELAY": request_delay or settings.REQUEST_DELAY,
+        "CONCURRENT_REQUESTS": settings.SCRAPY_CONCURRENT_REQUESTS,
+        "CONCURRENT_REQUESTS_PER_DOMAIN": settings.SCRAPY_CONCURRENT_REQUESTS,
+        "DOWNLOAD_DELAY": max(0.0, download_delay),
         "USER_AGENT": "ScrapooCrawler/1.0 (+https://github.com/nemanjap24/scrapoo)",
         "ROBOTSTXT_OBEY": False,
+        "AUTOTHROTTLE_ENABLED": False,
     }
 
     process = CrawlerProcess(settings=spider_settings)

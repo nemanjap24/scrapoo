@@ -9,7 +9,7 @@ from tortoise import Tortoise
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
-from app.models import Film, Genre, Person, PersonInFilm
+from app.models import Country, Film, Genre, Person, PersonInFilm
 from app.services.csfd_scraper import crawl_movies
 from app.services.sitemap_loader import expand_sitemaps
 
@@ -17,12 +17,17 @@ from app.services.sitemap_loader import expand_sitemaps
 @celery_app.task(name="tasks.scraping.scrape_movies")
 def run_scraping_job(
     sitemap_urls: Sequence[str],
-    include_people: bool = False,
+    include_people: bool = True,
     include_movies: bool = True,
+    max_films: int | None = None,
 ) -> dict:
     """Expand sitemap files into seeds and persist crawled movies."""
 
-    film_seeds = expand_sitemaps(sitemap_urls, include_movies=include_movies)
+    film_seeds = expand_sitemaps(
+        sitemap_urls,
+        include_movies=include_movies,
+        max_films=max_films,
+    )
     if not film_seeds:
         return {
             "seeds": [],
@@ -38,41 +43,84 @@ def run_scraping_job(
         request_delay=settings.REQUEST_DELAY,
     )
 
-    saved_movies = asyncio.run(_persist_films(batch.movies))
+    saved_movies, saved_people = asyncio.run(_persist_batch(batch.movies, batch.people))
     return {
         "seeds": film_seeds,
         "films_saved": saved_movies,
-        "people_collected": len(batch.people),
+        "people_collected": saved_people,
         "sitemaps": list(sitemap_urls),
     }
+
+
+async def _persist_batch(movies: Iterable[dict], people: Iterable[dict]) -> tuple[int, int]:
+    await Tortoise.init(db_url=settings.DATABASE_URL, modules={"models": settings.TORTOISE_MODELS})
+    try:
+        films_saved = await _persist_films(movies)
+        people_saved = await _persist_people(people)
+    finally:
+        await Tortoise.close_connections()
+    return films_saved, people_saved
 
 
 async def _persist_films(movies: Iterable[dict]) -> int:
     if not movies:
         return 0
 
-    await Tortoise.init(db_url=settings.DATABASE_URL, modules={"models": settings.TORTOISE_MODELS})
+    saved = 0
+    for payload in movies:
+        data = _coerce_film_payload(payload)
+        if not data:
+            continue
+        lookup_url = data.get("url")
+        film: Film | None = None
+        if lookup_url:
+            film, _ = await Film.update_or_create(url=lookup_url, defaults=data)
+        else:
+            film = await Film.create(**data)
+        if not film:
+            continue
+        await _sync_genres(film, payload.get("genres"))
+        await _sync_people(film, payload.get("directors"), role="director")
+        await _sync_people(film, payload.get("actors"), role="actor")
+        await _sync_country(film, payload.get("country"))
+        saved += 1
+    return saved
+
+
+async def _persist_people(people: Iterable[dict]) -> int:
+    if not people:
+        return 0
 
     saved = 0
-    try:
-        for payload in movies:
-            data = _coerce_film_payload(payload)
-            if not data:
-                continue
-            lookup_url = data.get("url")
-            film: Film | None = None
-            if lookup_url:
-                film, _ = await Film.update_or_create(url=lookup_url, defaults=data)
-            else:
-                film = await Film.create(**data)
-            if not film:
-                continue
-            await _sync_genres(film, payload.get("genres"))
-            await _sync_people(film, payload.get("directors"), role="director")
-            await _sync_people(film, payload.get("actors"), role="actor")
-            saved += 1
-    finally:
-        await Tortoise.close_connections()
+    for payload in people:
+        url = payload.get("csfd_url")
+        csfd_id = (payload.get("csfd_id") or "").strip()
+        if not url and csfd_id:
+            base_url = str(settings.BASE_URL).rstrip("/")
+            url = f"{base_url}/tvorca/{csfd_id.strip('/')}/"
+        if not url:
+            continue
+        default_name = (payload.get("name") or "").strip() or _humanize_slug(csfd_id)
+        occupation = (payload.get("occupation") or "Actor").strip() or "Actor"
+        person, _ = await Person.get_or_create(
+            url=url,
+            defaults={
+                "name": default_name,
+                "occupation": occupation,
+            },
+        )
+
+        updates: list[str] = []
+        name = (payload.get("name") or "").strip()
+        if name and name != person.name:
+            person.name = name
+            updates.append("name")
+        if occupation and person.occupation != occupation:
+            person.occupation = occupation
+            updates.append("occupation")
+        if updates:
+            await person.save(update_fields=updates)
+        saved += 1
     return saved
 
 
@@ -147,6 +195,19 @@ async def _sync_people(film: Film, slugs: Iterable[str] | None, *, role: str) ->
             person=person,
             defaults={"role": role},
         )
+
+
+async def _sync_country(film: Film, country_name: str | None) -> None:
+    if not country_name:
+        return
+    cleaned = country_name.strip()
+    if not cleaned:
+        return
+    country_obj, _ = await Country.get_or_create(name=cleaned)
+    if film.country_id == country_obj.id:
+        return
+    film.country = country_obj
+    await film.save(update_fields=["country"])
 
 
 async def _get_or_create_person(slug: str | None, role: str) -> Person | None:

@@ -26,7 +26,8 @@ curl -X POST http://localhost:8000/api/v1/movies/scrape \
 	-H "Content-Type: application/json" \
 	-d '{
 			"from_page": 1,
-			"max_pages": 5,
+			"max_pages": 1,
+			"max_films": 1000,
 			"include_people": true,
 			"include_movies": true
 		}'
