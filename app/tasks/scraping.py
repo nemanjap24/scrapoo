@@ -11,41 +11,40 @@ from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.models import Film, Genre, Person, PersonInFilm
 from app.services.csfd_scraper import crawl_movies
+from app.services.sitemap_loader import expand_sitemaps
 
 
 @celery_app.task(name="tasks.scraping.scrape_movies")
 def run_scraping_job(
-    urls: Sequence[str],
-    max_listing_pages: int = 1,
+    sitemap_urls: Sequence[str],
     include_people: bool = False,
+    include_movies: bool = True,
 ) -> dict:
-    """Crawl the provided URLs and upsert the resulting movies."""
+    """Expand sitemap files into seeds and persist crawled movies."""
 
-    seeds = _normalize_urls(urls)
+    film_seeds = expand_sitemaps(sitemap_urls, include_movies=include_movies)
+    if not film_seeds:
+        return {
+            "seeds": [],
+            "films_saved": 0,
+            "people_collected": 0,
+            "sitemaps": list(sitemap_urls),
+        }
+
     batch = crawl_movies(
-        seeds,
-        max_listing_pages=max_listing_pages,
+        film_seeds,
+        max_listing_pages=1,
         include_people=include_people,
         request_delay=settings.REQUEST_DELAY,
     )
 
     saved_movies = asyncio.run(_persist_films(batch.movies))
     return {
-        "seeds": seeds,
+        "seeds": film_seeds,
         "films_saved": saved_movies,
         "people_collected": len(batch.people),
+        "sitemaps": list(sitemap_urls),
     }
-
-
-def _normalize_urls(urls: Sequence[str]) -> list[str]:
-    normalized: list[str] = []
-    for url in urls:
-        if not url:
-            continue
-        cleaned = url.strip()
-        if cleaned:
-            normalized.append(cleaned)
-    return list(dict.fromkeys(normalized))
 
 
 async def _persist_films(movies: Iterable[dict]) -> int:

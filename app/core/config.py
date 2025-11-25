@@ -27,6 +27,7 @@ class Settings(BaseSettings):
         "rlW0rKOyVwbjYPWipzyanJ4vBz51oTjfVzqyoaWyVwcoKFjvrJIupy9zpz9gVwblZQRjYPW5"
         "MJSlK3EiVwblZQVjYPWuL3EipvV6J10fVzEcpzIwqT9lVwcoKK0"
     )
+    SITEMAP_INDEX_URL: HttpUrl = "https://static.pmgstatic.com/sitemaps/www.csfd.sk/sitemap.xml"
     REQUEST_DELAY: float = 0.2
 
     model_config = SettingsConfigDict(

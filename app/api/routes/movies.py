@@ -1,10 +1,11 @@
 from typing import List
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 
-from app.core.config import settings
 from app.models import Film
 from app.schemas import FilmCreate, FilmRead, PersonSummary, ScrapeJobResponse, ScrapeMoviesRequest
+from app.services.sitemap_loader import resolve_sitemaps, SitemapResolutionError
 from app.tasks.scraping import run_scraping_job
 
 router = APIRouter()
@@ -36,27 +37,32 @@ async def create_film(payload: FilmCreate) -> FilmRead:
 @router.post(
     "/scrape",
     response_model=ScrapeJobResponse,
-    summary="Enqueue a Scrapy crawl",
+    summary="Enqueue a sitemap-driven crawl",
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def enqueue_scrape(payload: ScrapeMoviesRequest) -> ScrapeJobResponse:
-    seeds = payload.urls or [settings.MAGIC_URL]
-    normalized = [str(url).strip() for url in seeds if str(url).strip()]
-    if not normalized:
-        raise HTTPException(status_code=400, detail="At least one seed URL is required")
+    try:
+        sitemap_urls = await run_in_threadpool(resolve_sitemaps, payload.from_page, payload.max_pages)
+    except SitemapResolutionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if not sitemap_urls:
+        raise HTTPException(status_code=404, detail="No sitemap URLs matched the requested range")
 
     task = run_scraping_job.delay(
-        normalized,
-        payload.max_listing_pages,
+        sitemap_urls,
         payload.include_people,
+        payload.include_movies,
     )
 
     return ScrapeJobResponse(
         task_id=task.id,
-        seeds=normalized,
+        from_page=payload.from_page,
+        max_pages=payload.max_pages,
         include_people=payload.include_people,
-        max_listing_pages=payload.max_listing_pages,
-        queued=len(normalized),
+        include_movies=payload.include_movies,
+        sitemaps=sitemap_urls,
+        queued=len(sitemap_urls),
     )
 
 

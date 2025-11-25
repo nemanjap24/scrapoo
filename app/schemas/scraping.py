@@ -1,41 +1,38 @@
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field
 
 
 class ScrapeMoviesRequest(BaseModel):
-    urls: Optional[List[HttpUrl]] = Field(
+    from_page: Optional[int] = Field(
         default=None,
-        description="Absolute URLs to CSFD listing or film pages. Defaults to MAGIC_URL when omitted.",
-    )
-    max_listing_pages: int = Field(
-        default=1,
         ge=1,
-        le=25,
-        description="How many pagination steps to traverse when seeding from listing pages.",
+        description="1-based index of the sitemap to start from.",
+    )
+    max_pages: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=250,
+        description="Maximum number of sitemap files to process once from_page is applied.",
     )
     include_people: bool = Field(
         default=False,
         description="Also crawl linked person pages when available.",
     )
-
-    @field_validator("urls", mode="before")
-    @classmethod
-    def _strip_whitespace(cls, value):  # noqa: D401 - short helper
-        if value is None:
-            return value
-        cleaned: List[str] = []
-        for item in value:
-            if isinstance(item, str):
-                cleaned.append(item.strip())
-            else:
-                cleaned.append(item)
-        return cleaned
+    include_movies: bool = Field(
+        default=True,
+        description="When false, movie URLs are ignored (primarily for future creator-only crawls).",
+    )
 
 
 class ScrapeJobResponse(BaseModel):
     task_id: str
-    seeds: List[str]
+    from_page: Optional[int] = None
+    max_pages: Optional[int] = None
     include_people: bool
-    max_listing_pages: int
-    queued: int
+    include_movies: bool
+    sitemaps: List[str] = Field(default_factory=list)
+    queued: int = Field(
+        default=0,
+        description="Number of sitemap XML files queued for the worker.",
+    )

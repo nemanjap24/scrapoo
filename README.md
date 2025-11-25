@@ -25,14 +25,16 @@ Once the stack is up, you can enqueue CSFD crawls directly from the API:
 curl -X POST http://localhost:8000/api/v1/movies/scrape \
 	-H "Content-Type: application/json" \
 	-d '{
-				"urls": ["https://www.csfd.sk/rebricky/vlastny-vyber/?page=1"],
-				"max_listing_pages": 2,
-				"include_people": false
-			}'
+			"from_page": 1,
+			"max_pages": 5,
+			"include_people": true,
+			"include_movies": true
+		}'
 ```
 
-The endpoint responds with the Celery task id plus the seeds that were queued. The worker
-scrapes each film detail page via Scrapy and stores/updates the resulting metadata in PostgreSQL.
+The endpoint now resolves CSFD sitemap files from `https://static.pmgstatic.com/sitemaps/www.csfd.sk/sitemap.xml`,
+queues the selected sitemap URLs, and lets the Celery worker expand them into individual film pages. The worker
+then crawls each film via Scrapy and persists the results in PostgreSQL (optionally capturing linked people).
 
 ## Legacy sitemap collector module
 
