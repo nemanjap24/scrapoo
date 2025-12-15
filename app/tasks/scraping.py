@@ -93,11 +93,8 @@ async def _persist_people(people: Iterable[dict]) -> int:
 
     saved = 0
     for payload in people:
-        url = payload.get("csfd_url")
         csfd_id = (payload.get("csfd_id") or "").strip()
-        if not url and csfd_id:
-            base_url = str(settings.BASE_URL).rstrip("/")
-            url = f"{base_url}/tvorca/{csfd_id.strip('/')}/"
+        url = _canonical_person_url(payload.get("csfd_url"), csfd_id)
         if not url:
             continue
         default_name = (payload.get("name") or "").strip() or _humanize_slug(csfd_id)
@@ -249,3 +246,29 @@ def _humanize_slug(slug: str) -> str:
     candidate = parts[1] if len(parts) > 1 else parts[0]
     words = [w.capitalize() for w in candidate.replace("-", " ").split() if w]
     return " ".join(words) if words else candidate.capitalize()
+
+
+def _canonical_person_url(raw_url: str | None, csfd_id: str | None) -> str | None:
+    base_url = str(settings.BASE_URL).rstrip("/")
+    if csfd_id:
+        slug = csfd_id.strip().strip("/")
+        if slug:
+            return f"{base_url}/tvorca/{slug}/"
+    if not raw_url:
+        return None
+    url = raw_url.strip()
+    if not url:
+        return None
+    for token in ("#", "?"):
+        if token in url:
+            url = url.split(token, 1)[0]
+    if url.startswith("//"):
+        url = f"https:{url}"
+    if url.startswith("/"):
+        url = f"{base_url}{url}"
+    url = url.rstrip("/")
+    if url.endswith("/prehlad"):
+        url = url[: -len("/prehlad")]
+    if not url.lower().startswith("http"):
+        return None
+    return f"{url.strip()}/"

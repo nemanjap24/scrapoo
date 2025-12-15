@@ -6,6 +6,11 @@ plain-Python payloads.
 """
 from __future__ import annotations
 
+import argparse
+import base64
+import json
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Optional
 
@@ -381,11 +386,38 @@ def crawl_movies(
     include_people: bool = True,
     request_delay: Optional[float] = None,
 ) -> ScrapeBatch:
-    """Run the CSFD spider and return collected payloads."""
+    """Run the CSFD spider and return collected payloads.
 
-    collector = _Collector()
+    We shell out to a helper invocation (`python -m app.services.csfd_scraper`) so
+    each crawl gets its own fresh Twisted reactor, sidestepping
+    ReactorNotRestartable without having to spawn multiprocessing children from
+    Celery's daemonized pool workers."""
+
+    start_urls_list = list(start_urls)
     download_delay = settings.REQUEST_DELAY if request_delay is None else request_delay
-    spider_settings = {
+    payload = {
+        "start_urls": start_urls_list,
+        "max_listing_pages": max(0, max_listing_pages),
+        "include_people": include_people,
+        "download_delay": download_delay,
+    }
+    encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+    cmd = [sys.executable, "-m", "app.services.csfd_scraper", "--crawl-payload", encoded]
+    completed = subprocess.run(cmd, capture_output=True, text=True)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "Scrapy crawl failed in helper process:\n"
+            f"STDOUT:\n{completed.stdout}\nSTDERR:\n{completed.stderr}"
+        )
+    try:
+        parsed = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError as exc:  # pragma: no cover - defensive
+        raise RuntimeError(f"Failed to parse scraper output: {exc}\nRaw: {completed.stdout}") from exc
+    return ScrapeBatch(movies=parsed.get("movies", []), people=parsed.get("people", []))
+
+
+def _build_spider_settings(download_delay: float) -> Dict:
+    return {
         "LOG_ENABLED": False,
         "CONCURRENT_REQUESTS": settings.SCRAPY_CONCURRENT_REQUESTS,
         "CONCURRENT_REQUESTS_PER_DOMAIN": settings.SCRAPY_CONCURRENT_REQUESTS,
@@ -395,13 +427,35 @@ def crawl_movies(
         "AUTOTHROTTLE_ENABLED": False,
     }
 
+
+def _execute_crawl(payload: Dict) -> ScrapeBatch:
+    collector = _Collector()
+    spider_settings = _build_spider_settings(payload["download_delay"])
     process = CrawlerProcess(settings=spider_settings)
     process.crawl(
         CSFDSpider,
-        start_urls=list(start_urls),
+        start_urls=payload["start_urls"],
         item_callback=collector,
-        max_listing_pages=max_listing_pages,
-        include_people=include_people,
+        max_listing_pages=payload["max_listing_pages"],
+        include_people=payload["include_people"],
     )
     process.start()
     return collector.build()
+
+
+def _cli_entry() -> int:
+    parser = argparse.ArgumentParser(description="Internal helper to run Scrapy crawls in isolation.")
+    parser.add_argument("--crawl-payload", help="Base64-encoded JSON crawl configuration.")
+    args = parser.parse_args()
+    if not args.crawl_payload:
+        parser.print_help()
+        return 1
+    payload_json = base64.b64decode(args.crawl_payload.encode("ascii"))
+    payload = json.loads(payload_json)
+    batch = _execute_crawl(payload)
+    sys.stdout.write(json.dumps({"movies": batch.movies, "people": batch.people}))
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry
+    raise SystemExit(_cli_entry())

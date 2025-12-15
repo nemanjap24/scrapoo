@@ -37,6 +37,30 @@ The endpoint now resolves CSFD sitemap files from `https://static.pmgstatic.com/
 queues the selected sitemap URLs, and lets the Celery worker expand them into individual film pages. The worker
 then crawls each film via Scrapy and persists the results in PostgreSQL (optionally capturing linked people).
 
+Available POST body options:
+
+- `from_page` _(int, optional)_ – 1-based sitemap index to start at. Skip earlier sitemaps by setting this to >1.
+- `max_pages` _(int, optional)_ – number of sitemap files to process after `from_page`. Hard capped at 250.
+- `max_films` _(int, optional)_ – stops the crawl once this many film detail pages have been visited, even if there
+  are still sitemaps left in the window.
+- `include_people` _(bool, default true)_ – when true, every discovered actor/director also gets a dedicated person
+  crawl; when false only the inline person stubs from film pages are emitted.
+- `include_movies` _(bool, default true)_ – future-proof flag for creator-only runs. Leave true unless you
+  deliberately want to ignore film URLs.
+
+#### Worker internals (important when toggling `include_people`)
+
+- Every scrape job shells out to `python -m app.services.csfd_scraper`. That helper process spins up Twisted's
+  reactor, runs the Scrapy spider, and prints the collected payloads as JSON. Because a brand-new process is used
+  per job, Celery never attempts to restart a reactor inside its own worker pool, eliminating the
+  `twisted.internet.error.ReactorNotRestartable` crashes. When the helper exits with a non-zero code, the API task
+  surfaces its stdout/stderr for quick diagnosis.
+- Films always emit creator/person stubs inline, regardless of the `include_people` flag. Those stubs give us
+  director/actor slugs, names, and URLs directly from the film page so we can persist relationships quickly.
+- Setting `include_people=true` additionally queues each encountered person for a dedicated detail-page crawl.
+  When `include_people=false`, no extra person requests are scheduled—only the inline stubs from the film remain,
+  which is sufficient for speeding up ingestion when full biographies are not needed.
+
 ## Legacy sitemap collector module
 
 Features
