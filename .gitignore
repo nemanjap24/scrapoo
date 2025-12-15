@@ -10,4 +10,5 @@
 .DS_Store
 *.json
 archive/*
+.idea/*
 .gitignore
