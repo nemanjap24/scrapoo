@@ -5,7 +5,7 @@ Standalone script/module to collect URLs from robots.txt -> sitemaps -> nested s
 ## FastAPI + Scrapy stack (WIP)
 
 The project is migrating to a FastAPI + Scrapy + Celery architecture. To run the local stack
-with Docker Compose (API, Celery worker, PostgreSQL, Redis):
+with Docker Compose (API, Celery worker, PostgreSQL, Redis, Streamlit dashboard):
 
 ```bash
 docker compose up --build
@@ -14,6 +14,7 @@ docker compose up --build
 - API: http://localhost:8000 (FastAPI docs at `/docs`).
 - PostgreSQL: exposed on port 5432 (default credentials in `docker-compose.yml`).
 - Redis: exposed on port 6379 for Celery broker/result backend.
+- Dashboard: http://localhost:8501 (Streamlit UI powered by the analytics endpoints).
 
 Set custom secrets via `.env` or override the compose environment variables before running.
 
@@ -60,6 +61,35 @@ Available POST body options:
 - Setting `include_people=true` additionally queues each encountered person for a dedicated detail-page crawl.
   When `include_people=false`, no extra person requests are scheduled—only the inline stubs from the film remain,
   which is sufficient for speeding up ingestion when full biographies are not needed.
+
+### Analytics overview endpoint
+
+- `GET /api/v1/analytics/overview?limit=5` aggregates crawl results:
+  - `total_films` / `total_people` give collection sizes.
+  - `top_actors` and `top_directors` return the most prolific people (by film count) for their roles.
+  - `prolific_countries` highlight countries with the highest number of films in the database.
+- Adjust `limit` (1–20) to control how many entries each list contains.
+
+### Additional analytics endpoints
+
+- `GET /api/v1/analytics/people?roles=actor&roles=director&limit=5&min_films=1`
+  - Query multiple roles (default actor+director) and see the most prolific people per role.
+  - `limit` (1–30) caps how many people each role returns; `min_films` filters out lightly credited entries.
+- `GET /api/v1/analytics/countries?limit=10`
+  - Returns the busiest production countries plus their share of the total film catalog.
+- `GET /api/v1/analytics/releases?bucket=decade&limit=12`
+  - Summarizes how many films were released per year or decade (use `bucket=year` for yearly breakdowns).
+- `GET /api/v1/analytics/network/collaboration?limit_nodes=10&limit_edges=10&min_shared_films=2`
+  - Computes a NetworkX-powered collaboration graph: returns graph stats, the most central creators, and
+    the strongest partnerships (weighted by shared films).
+
+### Streamlit dashboard
+
+- Already runs as part of `docker compose up` (see http://localhost:8501).
+- For standalone use, install dependencies (`pip install -r requirements.txt`), set `SCRAPOO_API_URL`
+  if needed (default `http://localhost:8000/api/v1`), then run `streamlit run dashboard/streamlit_app.py`.
+- The UI surfaces the same analytics (overview, roles, countries, releases, collaboration graph) with Plotly charts
+  plus an interactive PyVis-powered network visualization of the strongest collaborations.
 
 ## Legacy sitemap collector module
 

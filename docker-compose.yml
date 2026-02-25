@@ -54,5 +54,20 @@ services:
     ports:
       - "6379:6379"
 
+  dashboard:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dashboard
+    container_name: scrapoo-dashboard
+    environment:
+      SCRAPOO_API_URL: http://api:8000/api/v1
+      SCRAPOO_API_TIMEOUT: "30"
+    volumes:
+      - ./:/app
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+
 volumes:
   postgres-data:
