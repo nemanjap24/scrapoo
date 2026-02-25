@@ -77,6 +77,55 @@ def render_releases() -> None:
     st.dataframe(df)
 
 
+def _render_network_graph(nodes: list[Dict[str, Any]], edges: list[Dict[str, Any]]) -> None:
+    if not nodes or not edges:
+        st.info("Not enough data to visualize the network yet.")
+        return
+    net = Network(height="600px", width="100%", bgcolor="#0E1117", font_color="#FAFAFA")
+    net.barnes_hut()
+    present_nodes: dict[int, Dict[str, Any]] = {}
+    for node in nodes:
+        label = node.get("name") or f"Person {node['person_id']}"
+        title_parts = [label]
+        occupation = node.get("occupation")
+        if occupation:
+            title_parts.append(occupation)
+        value = float(node.get("value", 0.0))
+        title_parts.append(f"Centrality: {value:.3f}")
+        net.add_node(
+            node["person_id"],
+            label=label,
+            title=" | ".join(title_parts),
+            value=max(value, 0.001),
+        )
+        present_nodes[int(node["person_id"])] = {
+            "label": label,
+            "occupation": occupation,
+        }
+    for edge in edges:
+        source_label = edge.get("source_name") or f"Person {edge['source_id']}"
+        target_label = edge.get("target_name") or f"Person {edge['target_id']}"
+        for identifier, label in (
+            (edge["source_id"], source_label),
+            (edge["target_id"], target_label),
+        ):
+            if int(identifier) not in present_nodes:
+                net.add_node(identifier, label=label, title=label, value=0.5)
+                present_nodes[int(identifier)] = {"label": label, "occupation": None}
+        net.add_edge(
+            edge["source_id"],
+            edge["target_id"],
+            value=edge.get("weight", 1),
+            title=f"{edge.get('weight', 1)} shared films: {source_label} ↔ {target_label}",
+        )
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".html", delete=False) as tmp_file:
+        net.save_graph(tmp_file.name)
+        tmp_file.seek(0)
+        html_content = tmp_file.read()
+    components_html(html_content, height=650, scrolling=True)
+    os.unlink(tmp_file.name)
+
+
 def render_network() -> None:
     limit_nodes = st.slider("Top central people", min_value=5, max_value=50, value=10)
     limit_edges = st.slider("Top collaborations", min_value=5, max_value=50, value=10)
@@ -129,40 +178,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-def _render_network_graph(nodes: list[Dict[str, Any]], edges: list[Dict[str, Any]]) -> None:
-    if not nodes or not edges:
-        st.info("Not enough data to visualize the network yet.")
-        return
-    net = Network(height="600px", width="100%", bgcolor="#0E1117", font_color="#FAFAFA")
-    net.barnes_hut()
-    for node in nodes:
-        label = node.get("name") or f"Person {node['person_id']}"
-        title_parts = [label]
-        occupation = node.get("occupation")
-        if occupation:
-            title_parts.append(occupation)
-        value = float(node.get("value", 0.0))
-        title_parts.append(f"Centrality: {value:.3f}")
-        net.add_node(
-            node["person_id"],
-            label=label,
-            title=" | ".join(title_parts),
-            value=max(value, 0.001),
-        )
-    for edge in edges:
-        source_label = edge.get("source_name") or f"Person {edge['source_id']}"
-        target_label = edge.get("target_name") or f"Person {edge['target_id']}"
-        net.add_edge(
-            edge["source_id"],
-            edge["target_id"],
-            value=edge.get("weight", 1),
-            title=f"{edge.get('weight', 1)} shared films: {source_label} ↔ {target_label}",
-        )
-    with tempfile.NamedTemporaryFile(mode="w+", suffix=".html", delete=False) as tmp_file:
-        net.save_graph(tmp_file.name)
-        tmp_file.seek(0)
-        html_content = tmp_file.read()
-    components_html(html_content, height=650, scrolling=True)
-    os.unlink(tmp_file.name)
