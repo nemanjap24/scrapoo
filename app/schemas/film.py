@@ -30,8 +30,8 @@ class PersonSummary(BaseModel):
 
 
 class FilmBase(BaseModel):
-    title: str = Field(..., max_length=50)
-    original_title: str = Field(..., max_length=50)
+    title: str = Field(..., max_length=80)
+    original_title: str = Field(..., max_length=80)
     country_id: Optional[int] = None
     language: str = Field(..., max_length=50)
     release_year: Optional[int] = None
