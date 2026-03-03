@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     SITEMAP_INDEX_URL: HttpUrl = "https://static.pmgstatic.com/sitemaps/www.csfd.sk/sitemap.xml"
     REQUEST_DELAY: float = 0.0
     SCRAPY_CONCURRENT_REQUESTS: int = 32
+    SCRAPE_CHUNK_SIZE: int = 200
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -57,6 +58,23 @@ class Settings(BaseSettings):
                 f"postgres://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
             )
         return self
+
+    @field_validator("SCRAPE_CHUNK_SIZE", mode="before")
+    @classmethod
+    def _sanitize_chunk_size(cls, value: int | str | None) -> int:
+        default = cls.model_fields["SCRAPE_CHUNK_SIZE"].default
+        if value is None:
+            return default
+        if isinstance(value, int):
+            return max(1, value)
+        cleaned = value.split("#", 1)[0].strip()
+        if not cleaned:
+            return default
+        try:
+            parsed = int(float(cleaned))
+        except ValueError:
+            return default
+        return max(1, parsed)
 
 
 settings = Settings()

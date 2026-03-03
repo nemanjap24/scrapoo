@@ -61,6 +61,8 @@ Available POST body options:
 - Setting `include_people=true` additionally queues each encountered person for a dedicated detail-page crawl.
   When `include_people=false`, no extra person requests are scheduled—only the inline stubs from the film remain,
   which is sufficient for speeding up ingestion when full biographies are not needed.
+- Crawls stream seeds in configurable batches so long-running jobs stay predictable. Adjust `SCRAPE_CHUNK_SIZE`
+  (default 200) to control how many film URLs each helper process tackles before persistence runs.
 
 ### Analytics overview endpoint
 

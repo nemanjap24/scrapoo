@@ -25,8 +25,8 @@ class Genre(models.Model):
 
 class Film(models.Model):
     id = fields.IntField(pk=True)
-    title = fields.CharField(max_length=50)
-    original_title = fields.CharField(max_length=50, null=True)
+    title = fields.CharField(max_length=150)
+    original_title = fields.CharField(max_length=150, null=True)
     language = fields.CharField(max_length=50, null=True)
     release_year = fields.IntField(null=True)
     rating = fields.FloatField(null=True)
