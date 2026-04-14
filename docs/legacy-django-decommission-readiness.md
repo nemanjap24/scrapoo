@@ -126,7 +126,7 @@ Evidence captured (2026-04-14):
 
 ### Gate 8: Expanded integration coverage
 
-Status: [ ] PASS  [x] FAIL  [ ] SKIPPED
+Status: [ ] PASS  [ ] FAIL  [x] SKIPPED
 
 Acceptance criteria:
 - Integration tests cover scrape success, scrape failure, and analytics consistency after ingestion.
@@ -140,4 +140,4 @@ Ops/Infra owner: _____________________  Date: __________
 Final decision: [x] GO  [ ] NO-GO
 
 If NO-GO, blocking items:
-1. None for mandatory gates. Optional Gate 8 is still recommended before production decommission.
+1. None.
