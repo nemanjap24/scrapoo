@@ -30,7 +30,7 @@ _Last updated: 2026-04-14_
      person URLs/IDs so duplicates such as `/prehlad` variants collapse into a single record.
    - ✅ People endpoints aligned with Tortoise relations (`film_roles` / `person_in_films`) and available via API.
    - ✅ Scrape job status tracking is available at `GET /api/v1/movies/scrape/{task_id}`.
-   - ⏳ Scheduling (periodic crawl orchestration) still pending.
+  - ✅ Scheduling (periodic crawl orchestration) implemented via Celery beat (`tasks.scraping.schedule_default_crawl`).
 
 3. **Analytics & visualization**
    - ✅ Initial NetworkX service for collaboration graphs with degree centrality + partnership stats.
@@ -67,10 +67,16 @@ _Last updated: 2026-04-14_
 - Scrapy jobs now process sitemap seeds in configurable batches (`SCRAPE_CHUNK_SIZE`) so long crawls stay stable and per-chunk metrics are available for monitoring.
 - Added scrape task polling endpoint (`GET /api/v1/movies/scrape/{task_id}`) for operational visibility.
 - Added FastAPI smoke tests plus a clean Docker test entrypoint that avoids executing legacy Django tests.
+- Added Celery beat scheduler service and periodic crawl dispatch pipeline with worker execution evidence.
 
 ## Next Actions
 
-1. Add crawl scheduling (Celery beat or custom scheduler) with an API/reporting surface.
-2. Expand automated tests beyond smoke coverage (API integration + task failure paths).
-3. Harden CI/CD: pytest/mypy/format checks and containerized smoke tests in pipeline.
-4. Define and execute legacy Django decommission checklist once acceptance criteria are green.
+1. Expand automated tests beyond smoke coverage (API integration + task failure paths).
+2. Harden CI/CD: pytest/mypy/format checks and containerized smoke tests in pipeline.
+3. Define and execute legacy Django decommission checklist once acceptance criteria are green.
+
+## Decommission Gate
+
+- Use docs/legacy-django-decommission-readiness.md as the single GO/NO-GO checklist before deleting legacy Django code.
+- Use docs/operations-runbook.md for startup/health/troubleshooting and task-failure diagnostics.
+- Use docs/rollback-recovery.md for rollback steps, backup/restore rehearsal, and critical seed replay checks.

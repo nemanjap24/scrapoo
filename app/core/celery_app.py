@@ -18,6 +18,14 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
 )
 
+if settings.SCRAPE_SCHEDULE_MINUTES > 0:
+    celery_app.conf.beat_schedule = {
+        "schedule-default-crawl": {
+            "task": "tasks.scraping.schedule_default_crawl",
+            "schedule": settings.SCRAPE_SCHEDULE_MINUTES * 60,
+        }
+    }
+
 
 @celery_app.task(name="tasks.health.ping")
 def ping() -> str:

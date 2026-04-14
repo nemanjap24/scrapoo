@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     REQUEST_DELAY: float = 0.0
     SCRAPY_CONCURRENT_REQUESTS: int = 32
     SCRAPE_CHUNK_SIZE: int = 200
+    SCRAPE_SCHEDULE_MINUTES: int = 0
+    SCRAPE_SCHEDULE_FROM_PAGE: int = 1
+    SCRAPE_SCHEDULE_MAX_PAGES: int = 1
+    SCRAPE_SCHEDULE_MAX_FILMS: int = 1
+    SCRAPE_SCHEDULE_INCLUDE_PEOPLE: bool = False
+    SCRAPE_SCHEDULE_INCLUDE_MOVIES: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -63,6 +69,40 @@ class Settings(BaseSettings):
     @classmethod
     def _sanitize_chunk_size(cls, value: int | str | None) -> int:
         default = cls.model_fields["SCRAPE_CHUNK_SIZE"].default
+        if value is None:
+            return default
+        if isinstance(value, int):
+            return max(1, value)
+        cleaned = value.split("#", 1)[0].strip()
+        if not cleaned:
+            return default
+        try:
+            parsed = int(float(cleaned))
+        except ValueError:
+            return default
+        return max(1, parsed)
+
+    @field_validator("SCRAPE_SCHEDULE_MINUTES", mode="before")
+    @classmethod
+    def _sanitize_schedule_minutes(cls, value: int | str | None) -> int:
+        default = cls.model_fields["SCRAPE_SCHEDULE_MINUTES"].default
+        if value is None:
+            return default
+        if isinstance(value, int):
+            return max(0, value)
+        cleaned = value.split("#", 1)[0].strip()
+        if not cleaned:
+            return default
+        try:
+            parsed = int(float(cleaned))
+        except ValueError:
+            return default
+        return max(0, parsed)
+
+    @field_validator("SCRAPE_SCHEDULE_FROM_PAGE", "SCRAPE_SCHEDULE_MAX_PAGES", "SCRAPE_SCHEDULE_MAX_FILMS", mode="before")
+    @classmethod
+    def _sanitize_schedule_positive(cls, value: int | str | None, info) -> int:
+        default = cls.model_fields[info.field_name].default
         if value is None:
             return default
         if isinstance(value, int):

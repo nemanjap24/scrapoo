@@ -12,9 +12,44 @@ from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.models import Country, Film, Genre, Person, PersonInFilm
 from app.services.csfd_scraper import crawl_movies
-from app.services.sitemap_loader import expand_sitemaps
+from app.services.sitemap_loader import SitemapResolutionError, expand_sitemaps, resolve_sitemaps
 
 logger = logging.getLogger(__name__)
+
+
+@celery_app.task(name="tasks.scraping.schedule_default_crawl")
+def schedule_default_crawl() -> dict:
+    """Periodic entrypoint that enqueues a default sitemap crawl."""
+
+    try:
+        sitemap_urls = resolve_sitemaps(
+            from_page=settings.SCRAPE_SCHEDULE_FROM_PAGE,
+            max_pages=settings.SCRAPE_SCHEDULE_MAX_PAGES,
+        )
+    except SitemapResolutionError as exc:
+        logger.exception("Scheduled crawl failed while resolving sitemaps")
+        return {
+            "scheduled": False,
+            "error": str(exc),
+        }
+
+    if not sitemap_urls:
+        return {
+            "scheduled": False,
+            "error": "No sitemap URLs available for scheduled crawl",
+        }
+
+    task = run_scraping_job.delay(
+        sitemap_urls,
+        settings.SCRAPE_SCHEDULE_INCLUDE_PEOPLE,
+        settings.SCRAPE_SCHEDULE_INCLUDE_MOVIES,
+        settings.SCRAPE_SCHEDULE_MAX_FILMS,
+    )
+    return {
+        "scheduled": True,
+        "task_id": task.id,
+        "sitemaps": sitemap_urls,
+    }
 
 
 @celery_app.task(name="tasks.scraping.scrape_movies")

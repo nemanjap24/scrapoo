@@ -7,7 +7,7 @@ Standalone script/module to collect URLs from robots.txt -> sitemaps -> nested s
 ## FastAPI + Scrapy stack (WIP)
 
 The project is migrating to a FastAPI + Scrapy + Celery architecture. To run the local stack
-with Docker Compose (API, Celery worker, PostgreSQL, Redis, Streamlit dashboard):
+with Docker Compose (API, Celery worker, Celery beat scheduler, PostgreSQL, Redis, Streamlit dashboard):
 
 ```bash
 docker compose up --build
@@ -17,6 +17,7 @@ docker compose up --build
 - PostgreSQL: exposed on port 5432 (default credentials in `docker-compose.yml`).
 - Redis: exposed on port 6379 for Celery broker/result backend.
 - Dashboard: http://localhost:8501 (Streamlit UI powered by the analytics endpoints).
+- Celery beat: schedules periodic crawl tasks according to `SCRAPE_SCHEDULE_*` env vars.
 
 Set custom secrets via `.env` or override the compose environment variables before running.
 
@@ -55,6 +56,23 @@ After enqueueing a scrape, poll task state via:
 
 - `GET /api/v1/movies/scrape/{task_id}`
   - Returns Celery state (`PENDING`, `STARTED`, `SUCCESS`, `FAILURE`), completion flags, and task result/error payload.
+
+### Periodic scheduling (Gate 7)
+
+- Periodic crawl orchestration is handled by Celery beat via task `tasks.scraping.schedule_default_crawl`.
+- Scheduler interval and crawl scope are controlled via environment variables:
+  - `SCRAPE_SCHEDULE_MINUTES` (set `0` to disable scheduling)
+  - `SCRAPE_SCHEDULE_FROM_PAGE`
+  - `SCRAPE_SCHEDULE_MAX_PAGES`
+  - `SCRAPE_SCHEDULE_MAX_FILMS`
+  - `SCRAPE_SCHEDULE_INCLUDE_PEOPLE`
+  - `SCRAPE_SCHEDULE_INCLUDE_MOVIES`
+- Monitor scheduler activity with:
+
+```bash
+docker compose logs --tail=200 beat
+docker compose logs --tail=200 worker
+```
 
 #### Worker internals (important when toggling `include_people`)
 
