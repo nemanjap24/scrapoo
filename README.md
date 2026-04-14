@@ -1,5 +1,7 @@
 # sitemap_collector
 
+[![FastAPI Stack Tests](https://github.com/nemanjap24/scrapoo/actions/workflows/fastapi-tests.yml/badge.svg)](https://github.com/nemanjap24/scrapoo/actions/workflows/fastapi-tests.yml)
+
 Standalone script/module to collect URLs from robots.txt -> sitemaps -> nested sitemaps.
 
 ## FastAPI + Scrapy stack (WIP)
@@ -141,6 +143,21 @@ Example response item:
   if needed (default `http://localhost:8000/api/v1`), then run `streamlit run dashboard/streamlit_app.py`.
 - The UI surfaces the same analytics (overview, roles, countries, releases, collaboration graph) with Plotly charts
   plus an interactive PyVis-powered network visualization of the strongest collaborations.
+
+### Testing (FastAPI stack only)
+
+To run a clean test flow that excludes legacy Django tests, execute inside the API container:
+
+```bash
+docker compose exec -T api sh scripts/test_fastapi_stack.sh
+```
+
+This runs:
+
+- `app.tests.test_api_smoke` (FastAPI endpoint smoke tests)
+- `scraper.test_sitemap_collector` (sitemap collector tests)
+
+It intentionally does not run `scraper/tests.py` (legacy Django test module).
 
 ## Legacy sitemap collector module
 

@@ -1,6 +1,6 @@
 # Migration Plan: Django + BeautifulSoup → FastAPI + Scrapy + Tortoise ORM
 
-_Last updated: 2025-12-15_
+_Last updated: 2026-04-14_
 
 ## Goals
 
@@ -28,8 +28,9 @@ _Last updated: 2025-12-15_
    - ✅ Scrapy crawler feeds Celery task `tasks.scraping.scrape_movies`, persisting films/genres/people.
    - ✅ Scraper now shells out to an isolated helper process (fixes Twisted reactor restarts) and normalizes
      person URLs/IDs so duplicates such as `/prehlad` variants collapse into a single record.
-   - ⏳ People endpoints still pending; analytics summaries now cover overview, role, country, and release breakdowns.
-   - ⏳ Scheduling + job status tracking to follow once API surface is stable.
+   - ✅ People endpoints aligned with Tortoise relations (`film_roles` / `person_in_films`) and available via API.
+   - ✅ Scrape job status tracking is available at `GET /api/v1/movies/scrape/{task_id}`.
+   - ⏳ Scheduling (periodic crawl orchestration) still pending.
 
 3. **Analytics & visualization**
    - ✅ Initial NetworkX service for collaboration graphs with degree centrality + partnership stats.
@@ -38,7 +39,9 @@ _Last updated: 2025-12-15_
 
 4. **Ops & decommission**
    - Finalize Docker deployment (API, crawler workers, Redis, Postgres).
-   - Update CI/CD (pytest, mypy, formatting, crawler smoke tests).
+   - ✅ Introduced clean FastAPI-focused test flow that excludes legacy Django tests
+     (`scripts/test_fastapi_stack.sh` => `app.tests.test_api_smoke` + `scraper.test_sitemap_collector`).
+   - Update CI/CD (pytest/mypy formatting and crawler smoke tests).
    - Remove Django modules once FastAPI stack passes acceptance tests.
 
 ## Rollback Strategy
@@ -62,10 +65,12 @@ _Last updated: 2025-12-15_
 - Analytics router now exposes role leaderboards, country share stats, release-year/decade distributions, and collaboration graph metrics powered by NetworkX.
 - Streamlit dashboard consumes those endpoints to offer interactive charts without a separate frontend stack.
 - Scrapy jobs now process sitemap seeds in configurable batches (`SCRAPE_CHUNK_SIZE`) so long crawls stay stable and per-chunk metrics are available for monitoring.
+- Added scrape task polling endpoint (`GET /api/v1/movies/scrape/{task_id}`) for operational visibility.
+- Added FastAPI smoke tests plus a clean Docker test entrypoint that avoids executing legacy Django tests.
 
 ## Next Actions
 
-1. Finish people- and analytics-focused FastAPI endpoints, including serializers and tests.
-2. Add crawl scheduling + job status tracking (Celery beat or custom scheduler) with an API/reporting surface.
-3. Introduce analytics/visualization service (NetworkX metrics + export endpoints) with seed datasets.
-4. Harden CI/CD: pytest for API/tasks, linting, and a Scrapy smoke test baked into Docker workflows.
+1. Add crawl scheduling (Celery beat or custom scheduler) with an API/reporting surface.
+2. Expand automated tests beyond smoke coverage (API integration + task failure paths).
+3. Harden CI/CD: pytest/mypy/format checks and containerized smoke tests in pipeline.
+4. Define and execute legacy Django decommission checklist once acceptance criteria are green.
