@@ -43,3 +43,18 @@ class ScrapeJobResponse(BaseModel):
         default=0,
         description="Number of sitemap XML files queued for the worker.",
     )
+
+
+class ScrapeJobStatusResponse(BaseModel):
+    task_id: str
+    state: str = Field(description="Celery task state (PENDING, STARTED, SUCCESS, FAILURE, etc.).")
+    ready: bool = Field(description="True when Celery reports the task as finished.")
+    successful: bool = Field(description="True only when task state is SUCCESS.")
+    result: Optional[dict] = Field(
+        default=None,
+        description="Task payload returned on success.",
+    )
+    error: Optional[str] = Field(
+        default=None,
+        description="Error details when task failed.",
+    )

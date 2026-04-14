@@ -16,7 +16,7 @@ async def list_people(limit: int = 50, occupation: Optional[str] = None) -> List
         Person.all()
         .order_by("-id")
         .limit(limit)
-        .prefetch_related("film_links__film")
+        .prefetch_related("film_roles__films")
     )
     if occupation:
         query = query.filter(occupation__icontains=occupation)
@@ -28,7 +28,7 @@ async def list_people(limit: int = 50, occupation: Optional[str] = None) -> List
 async def get_person(person_id: int) -> PersonRead:
     person = (
         await Person.filter(id=person_id)
-        .prefetch_related("film_links__film")
+        .prefetch_related("film_roles__films")
         .first()
     )
     if not person:
@@ -37,11 +37,11 @@ async def get_person(person_id: int) -> PersonRead:
 
 
 def _serialize_person(person: Person) -> PersonRead:
-    links_attr = getattr(person, "film_links", None)
+    links_attr = getattr(person, "film_roles", None)
     link_objs = links_attr if isinstance(links_attr, list) else []
     films: List[FilmAppearance] = []
     for link in link_objs:
-        film = getattr(link, "film", None)
+        film = getattr(link, "films", None)
         if not film:
             continue
         films.append(

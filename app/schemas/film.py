@@ -30,15 +30,14 @@ class PersonSummary(BaseModel):
 
 
 class FilmBase(BaseModel):
-    title: str = Field(..., max_length=80)
-    original_title: str = Field(..., max_length=80)
+    title: str = Field(..., max_length=150)
+    original_title: Optional[str] = Field(default=None, max_length=150)
     country_id: Optional[int] = None
-    language: str = Field(..., max_length=50)
+    language: Optional[str] = Field(default=None, max_length=50)
     release_year: Optional[int] = None
     rating: Optional[float] = None
     num_votes: Optional[int] = None
-    genre_id: Optional[int] = None
-    url: str = Field(..., max_length=100)
+    url: Optional[str] = Field(default=None, max_length=100)
 
 
 class FilmCreate(FilmBase):
@@ -48,7 +47,6 @@ class FilmCreate(FilmBase):
 class FilmRead(FilmBase):
     id: int
     country: Optional[CountryRef] = None
-    genre: Optional[GenreRef] = None
     genres: List[GenreRef] = Field(default_factory=list)
     directors: List[PersonSummary] = Field(default_factory=list)
     actors: List[PersonSummary] = Field(default_factory=list)

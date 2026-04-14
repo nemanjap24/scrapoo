@@ -49,6 +49,11 @@ Available POST body options:
 - `include_movies` _(bool, default true)_ – future-proof flag for creator-only runs. Leave true unless you
   deliberately want to ignore film URLs.
 
+After enqueueing a scrape, poll task state via:
+
+- `GET /api/v1/movies/scrape/{task_id}`
+  - Returns Celery state (`PENDING`, `STARTED`, `SUCCESS`, `FAILURE`), completion flags, and task result/error payload.
+
 #### Worker internals (important when toggling `include_people`)
 
 - Every scrape job shells out to `python -m app.services.csfd_scraper`. That helper process spins up Twisted's
@@ -63,6 +68,50 @@ Available POST body options:
   which is sufficient for speeding up ingestion when full biographies are not needed.
 - Crawls stream seeds in configurable batches so long-running jobs stay predictable. Adjust `SCRAPE_CHUNK_SIZE`
   (default 200) to control how many film URLs each helper process tackles before persistence runs.
+
+### Core data endpoints (current response shape)
+
+- `GET /api/v1/movies?limit=1`
+  - Returns film records aligned with the Tortoise `Film` model.
+  - Genres are represented as a many-to-many list in `genres`.
+  - There is no singular `genre`/`genre_id` field in this API shape.
+
+Example response item:
+
+```json
+{
+  "id": 57,
+  "title": "Hana a jej sestry",
+  "original_title": "Hannah and Her Sisters",
+  "country_id": 6,
+  "language": "Unknown",
+  "release_year": 1986,
+  "rating": null,
+  "num_votes": null,
+  "url": "https://www.csfd.sk/film/38-hana-a-jej-sestry/prehlad/",
+  "country": { "id": 6, "name": "USA" },
+  "genres": [],
+  "directors": [],
+  "actors": []
+}
+```
+
+- `GET /api/v1/people?limit=1`
+  - Returns people with computed `film_count` and linked `films` entries.
+
+Example response item:
+
+```json
+{
+  "id": 3571,
+  "name": "Soon Yi Previn",
+  "occupation": "Actor",
+  "url": "https://www.csfd.sk/tvorca/587986-soon-yi-previn/",
+  "birth_date": null,
+  "film_count": 0,
+  "films": []
+}
+```
 
 ### Analytics overview endpoint
 

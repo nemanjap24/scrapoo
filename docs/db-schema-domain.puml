@@ -1,0 +1,63 @@
+@startuml
+' Domain-focused ER diagram (simplified)
+hide methods
+hide stereotypes
+skinparam classAttributeIconSize 0
+
+entity "Country" as Country {
+  * id
+  --
+  name
+}
+
+entity "Film" as Film {
+  * id
+  --
+  title
+  original_title
+  language
+  release_year
+  rating
+  num_votes
+  url
+}
+
+entity "Genre" as Genre {
+  * id
+  --
+  name
+}
+
+entity "Person" as Person {
+  * id
+  --
+  name
+  birth_date
+  occupation
+  url
+}
+
+entity "MovieLink" as MovieLink {
+  * id
+  --
+  url
+  status
+}
+
+entity "PersonInFilm" as PersonInFilm {
+  * id
+  --
+  role
+}
+
+Film }o--|| Country : belongs to
+Film }o--o{ Genre : tagged with
+Film ||--o{ PersonInFilm : has roles
+Person ||--o{ PersonInFilm : appears as
+
+note right of PersonInFilm
+  Unique pair per film/person:
+  (films_id, persons_id)
+end note
+
+@enduml
