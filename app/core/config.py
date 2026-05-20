@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     REQUEST_DELAY: float = 0.0
     SCRAPY_CONCURRENT_REQUESTS: int = 32
     SCRAPE_CHUNK_SIZE: int = 200
+    SCRAPE_PARALLEL_CHUNKS: int = 4
     SCRAPE_SCHEDULE_MINUTES: int = 0
     SCRAPE_SCHEDULE_FROM_PAGE: int = 1
     SCRAPE_SCHEDULE_MAX_PAGES: int = 1
@@ -69,6 +70,23 @@ class Settings(BaseSettings):
     @classmethod
     def _sanitize_chunk_size(cls, value: int | str | None) -> int:
         default = cls.model_fields["SCRAPE_CHUNK_SIZE"].default
+        if value is None:
+            return default
+        if isinstance(value, int):
+            return max(1, value)
+        cleaned = value.split("#", 1)[0].strip()
+        if not cleaned:
+            return default
+        try:
+            parsed = int(float(cleaned))
+        except ValueError:
+            return default
+        return max(1, parsed)
+
+    @field_validator("SCRAPE_PARALLEL_CHUNKS", mode="before")
+    @classmethod
+    def _sanitize_parallel_chunks(cls, value: int | str | None) -> int:
+        default = cls.model_fields["SCRAPE_PARALLEL_CHUNKS"].default
         if value is None:
             return default
         if isinstance(value, int):

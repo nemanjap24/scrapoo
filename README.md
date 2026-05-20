@@ -57,6 +57,8 @@ After enqueueing a scrape, poll task state via:
 
 - `GET /api/v1/movies/scrape/{task_id}`
   - Returns Celery state (`PENDING`, `STARTED`, `SUCCESS`, `FAILURE`), completion flags, and task result/error payload.
+  - Successful scrape results include timing fields such as `duration_seconds`, `films_per_second`, and per-chunk
+    `duration_seconds`/`films_per_second` values.
 
 ### Periodic scheduling (Gate 7)
 
@@ -68,6 +70,7 @@ After enqueueing a scrape, poll task state via:
   - `SCRAPE_SCHEDULE_MAX_FILMS`
   - `SCRAPE_SCHEDULE_INCLUDE_PEOPLE`
   - `SCRAPE_SCHEDULE_INCLUDE_MOVIES`
+  - `SCRAPE_PARALLEL_CHUNKS` (default `4`; number of scrape chunks dispatched in parallel waves)
 - Monitor scheduler activity with:
 
 ```bash
@@ -93,7 +96,8 @@ Poll enrichment state via:
 - `GET /api/v1/people/enrich/{task_id}`
 
 The enrichment task selects existing people from PostgreSQL, crawls their CSFD detail pages, and updates fields that
-the current schema can store, such as `birth_date`.
+the current schema can store, such as `birth_date`. Successful enrichment results include `duration_seconds`,
+`people_per_second`, and per-chunk timing values.
 
 #### Worker internals (important when toggling `include_people`)
 
@@ -109,6 +113,8 @@ the current schema can store, such as `birth_date`.
   person details later.
 - Crawls stream seeds in configurable batches so long-running jobs stay predictable. Adjust `SCRAPE_CHUNK_SIZE`
   (default 200) to control how many film URLs each helper process tackles before persistence runs.
+- Scrape chunks are dispatched to Celery in parallel waves controlled by `SCRAPE_PARALLEL_CHUNKS` (default 4).
+  The compose default worker concurrency is 5 so the parent scrape task can wait while 4 child chunk tasks run.
 
 ### Core data endpoints (current response shape)
 

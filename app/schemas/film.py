@@ -37,7 +37,7 @@ class FilmBase(BaseModel):
     release_year: Optional[int] = None
     rating: Optional[float] = None
     num_votes: Optional[int] = None
-    url: Optional[str] = Field(default=None, max_length=100)
+    url: Optional[str] = Field(default=None, max_length=255)
 
 
 class FilmCreate(FilmBase):

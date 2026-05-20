@@ -19,7 +19,7 @@ entity "film" as film {
   release_year : integer NULL
   rating : double precision NULL
   num_votes : integer NULL
-  url : varchar(100) NULL
+  url : varchar(255) NULL
   country_id : integer NULL <<FK>>
 }
 
@@ -39,7 +39,7 @@ entity "person" as person {
   --
   name : varchar(60)
   birth_date : date NULL
-  url : varchar(100) NULL
+  url : varchar(255) NULL
   occupation : varchar(50) NULL
 }
 
@@ -56,7 +56,7 @@ entity "person_in_film" as person_in_film {
 entity "movie_link" as movie_link {
   * id : integer <<PK>>
   --
-  url : varchar(100) NULL
+  url : varchar(255) NULL
   status : varchar(15) NULL
 }
 

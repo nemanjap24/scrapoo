@@ -24,17 +24,20 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
+    command: celery -A app.core.celery_app.celery_app worker --loglevel=info --concurrency=${CELERY_WORKER_CONCURRENCY:-5}
     container_name: scrapoo-worker
     environment:
       DATABASE_URL: postgres://scrapoo:scrapoo@postgres:5432/scrapoo
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       SCRAPY_SETTINGS_MODULE: crawler.settings
+      SCRAPE_CHUNK_SIZE: ${SCRAPE_CHUNK_SIZE:-200}
       SCRAPE_SCHEDULE_FROM_PAGE: ${SCRAPE_SCHEDULE_FROM_PAGE:-1}
       SCRAPE_SCHEDULE_MAX_PAGES: ${SCRAPE_SCHEDULE_MAX_PAGES:-1}
       SCRAPE_SCHEDULE_MAX_FILMS: ${SCRAPE_SCHEDULE_MAX_FILMS:-1}
       SCRAPE_SCHEDULE_INCLUDE_PEOPLE: ${SCRAPE_SCHEDULE_INCLUDE_PEOPLE:-false}
       SCRAPE_SCHEDULE_INCLUDE_MOVIES: ${SCRAPE_SCHEDULE_INCLUDE_MOVIES:-true}
+      SCRAPE_PARALLEL_CHUNKS: ${SCRAPE_PARALLEL_CHUNKS:-4}
     volumes:
       - ./:/app
     depends_on:
@@ -52,12 +55,14 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       SCRAPY_SETTINGS_MODULE: crawler.settings
+      SCRAPE_CHUNK_SIZE: ${SCRAPE_CHUNK_SIZE:-200}
       SCRAPE_SCHEDULE_MINUTES: ${SCRAPE_SCHEDULE_MINUTES:-1}
       SCRAPE_SCHEDULE_FROM_PAGE: ${SCRAPE_SCHEDULE_FROM_PAGE:-1}
       SCRAPE_SCHEDULE_MAX_PAGES: ${SCRAPE_SCHEDULE_MAX_PAGES:-1}
       SCRAPE_SCHEDULE_MAX_FILMS: ${SCRAPE_SCHEDULE_MAX_FILMS:-1}
       SCRAPE_SCHEDULE_INCLUDE_PEOPLE: ${SCRAPE_SCHEDULE_INCLUDE_PEOPLE:-false}
       SCRAPE_SCHEDULE_INCLUDE_MOVIES: ${SCRAPE_SCHEDULE_INCLUDE_MOVIES:-true}
+      SCRAPE_PARALLEL_CHUNKS: ${SCRAPE_PARALLEL_CHUNKS:-4}
     volumes:
       - ./:/app
     depends_on:

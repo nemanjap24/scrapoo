@@ -65,9 +65,9 @@ After the sitemap files are selected, the API does not scrape immediately. It cr
 
 The Celery worker receives the job and opens each selected sitemap. From those sitemap files it collects film URLs. If the request has a `max_films` limit, it stops collecting URLs once that limit is reached. If movie scraping is disabled, or no film URLs are found, the job finishes with zero saved films.
 
-When film URLs are available, the worker splits them into chunks using `SCRAPE_CHUNK_SIZE`. Each chunk is scraped separately. This keeps large jobs more manageable and lets the final task result show which chunks completed or failed.
+When film URLs are available, the worker splits them into chunks using `SCRAPE_CHUNK_SIZE`. It dispatches those chunks to Celery in parallel waves controlled by `SCRAPE_PARALLEL_CHUNKS`, which defaults to 4. This keeps large jobs more manageable, lets multiple Scrapy helper processes crawl at the same time, and lets the final task result show which chunks completed or failed.
 
-For every chunk, the worker starts a separate Python helper process. That helper process runs Scrapy. The reason for this extra process is that Scrapy uses Twisted, whose reactor is difficult to restart safely inside a long-running Celery worker. By launching a fresh helper process for each chunk, every crawl gets its own clean Scrapy runtime.
+For every chunk task, the worker starts a separate Python helper process. That helper process runs Scrapy. The reason for this extra process is that Scrapy uses Twisted, whose reactor is difficult to restart safely inside a long-running Celery worker. By launching a fresh helper process for each chunk, every crawl gets its own clean Scrapy runtime.
 
 Scrapy then visits each film URL. When it receives a film page, it extracts the main film information: title, original title, year, description, genres, rating, poster URL, country, directors, and actors. Directors and actors are collected from the creator links on the film page.
 
@@ -81,11 +81,11 @@ Films are saved first. For each film, the worker cleans the payload, converts th
 
 People are saved separately. Each person is identified by a canonical CSFD creator URL. If a person already exists, the worker updates basic fields such as name and occupation. If not, it creates a new person row.
 
-At the end of each chunk, the worker records how many films and people were saved. If a chunk fails while crawling, the job records the error for that chunk and continues with the next chunk. When all chunks are done, the task result contains the seed URLs, selected sitemaps, chunk size, total saved counts, and per-chunk details.
+At the end of each parallel wave, the parent scrape task persists returned people and films sequentially. Persistence remains centralized so parallel chunks do not race each other while creating shared people, genres, and countries. Each chunk records how many films and people were saved, how long crawling and persistence took, and the film throughput for that chunk. If a chunk fails while crawling, the job records the error and elapsed chunk time, then continues with the next chunk result. When all chunks are done, the task result contains the seed URLs, selected sitemaps, chunk size, parallel chunk count, total saved counts, total duration, overall scrape rate, and per-chunk details.
 
 Slow person enrichment starts when someone calls `POST /api/v1/people/enrich`. Instead of reading sitemaps, this task reads people that already exist in the database, usually the stubs created during fast film collection. By default it selects only people whose `birth_date` is still empty.
 
-The enrichment worker chunks those person URLs and sends them through the same isolated Scrapy helper process. This time the spider starts directly from person detail URLs, extracts person fields, and saves the enriched data back to the existing person rows. The current database schema supports saving `birth_date`; biography text is scraped but still has no database column.
+The enrichment worker chunks those person URLs and sends them through the same isolated Scrapy helper process. This time the spider starts directly from person detail URLs, extracts person fields, and saves the enriched data back to the existing person rows. Enrichment task results also include total duration, people-per-second rate, and per-chunk timing. The current database schema supports saving `birth_date`; biography text is scraped but still has no database column.
 
 ## Pseudo Code
 

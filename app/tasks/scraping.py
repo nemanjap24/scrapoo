@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from datetime import date
 from typing import Iterable, Sequence
 
+from celery import group
+from celery.result import allow_join_result
 from tortoise import Tortoise, connections
 
 from app.core.celery_app import celery_app
@@ -69,10 +72,13 @@ def run_scraping_job(
         max_films=max_films,
     )
     chunk_size = max(1, settings.SCRAPE_CHUNK_SIZE)
+    parallel_chunks = max(1, settings.SCRAPE_PARALLEL_CHUNKS)
+    started_at = time.monotonic()
     base_response = {
         "seeds": film_seeds,
         "sitemaps": list(sitemap_urls),
         "chunk_size": chunk_size,
+        "parallel_chunks": parallel_chunks,
     }
     if not film_seeds:
         base_response.update(
@@ -81,6 +87,8 @@ def run_scraping_job(
                 "people_collected": 0,
                 "chunks_processed": 0,
                 "chunk_details": [],
+                "duration_seconds": _elapsed_seconds(started_at),
+                "films_per_second": 0.0,
             }
         )
         return base_response
@@ -90,6 +98,7 @@ def run_scraping_job(
             film_seeds,
             include_people=include_people,
             chunk_size=chunk_size,
+            parallel_chunks=parallel_chunks,
         )
     )
 
@@ -99,6 +108,8 @@ def run_scraping_job(
             "people_collected": saved_people,
             "chunks_processed": len(chunk_details),
             "chunk_details": chunk_details,
+            "duration_seconds": _elapsed_seconds(started_at),
+            "films_per_second": _rate(saved_movies, started_at),
         }
     )
     return base_response
@@ -112,6 +123,7 @@ def enrich_people_job(
     """Enrich existing person stubs by crawling their detail pages."""
 
     normalized_limit = max(1, int(limit or 100))
+    started_at = time.monotonic()
     saved_people, selected_people, chunk_details = asyncio.run(
         _execute_people_enrichment(
             limit=normalized_limit,
@@ -124,6 +136,56 @@ def enrich_people_job(
         "chunk_size": max(1, settings.SCRAPE_CHUNK_SIZE),
         "chunks_processed": len(chunk_details),
         "chunk_details": chunk_details,
+        "duration_seconds": _elapsed_seconds(started_at),
+        "people_per_second": _rate(saved_people, started_at),
+    }
+
+
+@celery_app.task(name="tasks.scraping.scrape_movie_chunk")
+def scrape_movie_chunk(
+    chunk_index: int,
+    seed_urls: Sequence[str],
+    include_people: bool = False,
+) -> dict:
+    """Crawl one chunk of film URLs and return payloads for parent persistence."""
+
+    started_at = time.monotonic()
+    seeds = list(seed_urls)
+    meta: dict = {
+        "chunk": chunk_index,
+        "seed_count": len(seeds),
+        "films_saved": 0,
+        "people_collected": 0,
+        "status": "pending",
+    }
+    try:
+        logger.info("Starting crawl chunk %s (%s seeds)", chunk_index, len(seeds))
+        batch = crawl_movies(
+            seeds,
+            max_listing_pages=1,
+            include_people=include_people,
+            request_delay=settings.REQUEST_DELAY,
+        )
+    except Exception as exc:  # pragma: no cover - defensive logging edge
+        meta["status"] = "failed"
+        meta["error"] = str(exc)
+        meta["duration_seconds"] = _elapsed_seconds(started_at)
+        logger.exception("Chunk %s failed while crawling", chunk_index)
+        return {
+            "meta": meta,
+            "movies": [],
+            "people": [],
+        }
+
+    meta["status"] = "crawled"
+    meta["films_crawled"] = len(batch.movies)
+    meta["people_crawled"] = len(batch.people)
+    meta["crawl_duration_seconds"] = _elapsed_seconds(started_at)
+    meta["crawl_films_per_second"] = _rate(len(batch.movies), started_at)
+    return {
+        "meta": meta,
+        "movies": batch.movies,
+        "people": batch.people,
     }
 
 
@@ -132,45 +194,54 @@ async def _execute_scrape_pipeline(
     *,
     include_people: bool,
     chunk_size: int,
+    parallel_chunks: int,
 ) -> tuple[int, int, list[dict]]:
     await Tortoise.init(db_url=settings.DATABASE_URL, modules={"models": settings.TORTOISE_MODELS})
     await _ensure_film_column_capacity(getattr(Film._meta.fields_map.get("title"), "max_length", 150))
+    await _ensure_url_column_capacity(255)
     total_films = 0
     total_people = 0
     chunk_details: list[dict] = []
     try:
-        for index, chunk in enumerate(_chunked(film_seeds, chunk_size), start=1):
-            meta: dict = {
-                "chunk": index,
-                "seed_count": len(chunk),
-                "films_saved": 0,
-                "people_collected": 0,
-                "status": "pending",
-            }
-            try:
-                logger.info("Starting chunk %s (%s seeds)", index, len(chunk))
-                batch = crawl_movies(
-                    chunk,
-                    max_listing_pages=1,
-                    include_people=include_people,
-                    request_delay=settings.REQUEST_DELAY,
-                )
-            except Exception as exc:  # pragma: no cover - defensive logging edge
-                meta["status"] = "failed"
-                meta["error"] = str(exc)
-                logger.exception("Chunk %s failed while crawling", index)
-                chunk_details.append(meta)
-                continue
+        chunks = list(enumerate(_chunked(film_seeds, chunk_size), start=1))
+        for wave in _chunked(chunks, parallel_chunks):
+            wave_started_at = time.monotonic()
+            logger.info("Dispatching %s scrape chunks in parallel", len(wave))
+            chunk_group = group(
+                scrape_movie_chunk.s(index, chunk, include_people)
+                for index, chunk in wave
+            )
+            async_result = chunk_group.apply_async()
+            with allow_join_result():
+                crawl_results = async_result.get()
 
-            meta["status"] = "persisting"
-            people_saved = await _persist_people(batch.people)
-            films_saved = await _persist_films(batch.movies)
-            meta["films_saved"] = films_saved
-            meta["people_collected"] = people_saved
-            meta["status"] = "completed"
-            chunk_details.append(meta)
-            total_films += films_saved
-            total_people += people_saved
+            for result in sorted(crawl_results, key=lambda item: item.get("meta", {}).get("chunk", 0)):
+                meta = dict(result.get("meta") or {})
+                chunk_started_at = time.monotonic()
+                if meta.get("status") == "failed":
+                    chunk_details.append(meta)
+                    continue
+
+                meta["status"] = "persisting"
+                people_saved = await _persist_people(result.get("people") or [])
+                films_saved = await _persist_films(result.get("movies") or [])
+                meta["films_saved"] = films_saved
+                meta["people_collected"] = people_saved
+                meta["status"] = "completed"
+                meta["persist_duration_seconds"] = _elapsed_seconds(chunk_started_at)
+                meta["duration_seconds"] = round(
+                    float(meta.get("crawl_duration_seconds") or 0.0) + meta["persist_duration_seconds"],
+                    3,
+                )
+                meta["films_per_second"] = round(
+                    films_saved / max(0.001, meta["duration_seconds"]),
+                    3,
+                )
+                chunk_details.append(meta)
+                total_films += films_saved
+                total_people += people_saved
+
+            logger.info("Completed scrape chunk wave in %.3fs", time.monotonic() - wave_started_at)
     finally:
         await Tortoise.close_connections()
     return total_films, total_people, chunk_details
@@ -182,6 +253,7 @@ async def _execute_people_enrichment(
     only_missing_birth_date: bool,
 ) -> tuple[int, int, list[dict]]:
     await Tortoise.init(db_url=settings.DATABASE_URL, modules={"models": settings.TORTOISE_MODELS})
+    await _ensure_url_column_capacity(255)
     total_people = 0
     chunk_details: list[dict] = []
     try:
@@ -193,6 +265,7 @@ async def _execute_people_enrichment(
         chunk_size = max(1, settings.SCRAPE_CHUNK_SIZE)
 
         for index, chunk in enumerate(_chunked(seed_urls, chunk_size), start=1):
+            chunk_started_at = time.monotonic()
             meta: dict = {
                 "chunk": index,
                 "seed_count": len(chunk),
@@ -208,6 +281,7 @@ async def _execute_people_enrichment(
             except Exception as exc:  # pragma: no cover - defensive logging edge
                 meta["status"] = "failed"
                 meta["error"] = str(exc)
+                meta["duration_seconds"] = _elapsed_seconds(chunk_started_at)
                 logger.exception("People enrichment chunk %s failed while crawling", index)
                 chunk_details.append(meta)
                 continue
@@ -216,6 +290,8 @@ async def _execute_people_enrichment(
             people_saved = await _persist_people(batch.people)
             meta["people_enriched"] = people_saved
             meta["status"] = "completed"
+            meta["duration_seconds"] = _elapsed_seconds(chunk_started_at)
+            meta["people_per_second"] = _rate(people_saved, chunk_started_at)
             chunk_details.append(meta)
             total_people += people_saved
     finally:
@@ -481,6 +557,15 @@ def _chunked(sequence: Sequence[str], size: int) -> Iterable[list[str]]:
         yield list(sequence[start : start + size])
 
 
+def _elapsed_seconds(started_at: float) -> float:
+    return round(max(0.0, time.monotonic() - started_at), 3)
+
+
+def _rate(count: int, started_at: float) -> float:
+    elapsed = max(0.001, time.monotonic() - started_at)
+    return round(max(0, count) / elapsed, 3)
+
+
 async def _ensure_film_column_capacity(target_length: int) -> None:
     conn = connections.get("default")
     try:
@@ -500,5 +585,38 @@ async def _ensure_film_column_capacity(target_length: int) -> None:
         current = current_lengths.get(column) or 0
         if current < target_length:
             statements.append(f'ALTER TABLE "film" ALTER COLUMN "{column}" TYPE VARCHAR({target_length});')
+    if statements:
+        await conn.execute_script("\n".join(statements))
+
+
+async def _ensure_url_column_capacity(target_length: int) -> None:
+    conn = connections.get("default")
+    table_columns = {
+        "film": ("url",),
+        "person": ("url",),
+        "movie_link": ("url",),
+    }
+    try:
+        rows = await conn.execute_query_dict(
+            """
+            SELECT table_name, column_name, character_maximum_length
+            FROM information_schema.columns
+            WHERE table_name IN ('film', 'person', 'movie_link')
+              AND column_name = 'url'
+            """
+        )
+    except Exception:  # pragma: no cover - informational safeguard
+        return
+
+    current_lengths = {
+        (row["table_name"], row["column_name"]): row.get("character_maximum_length")
+        for row in rows
+    }
+    statements: list[str] = []
+    for table, columns in table_columns.items():
+        for column in columns:
+            current = current_lengths.get((table, column)) or 0
+            if current < target_length:
+                statements.append(f'ALTER TABLE "{table}" ALTER COLUMN "{column}" TYPE VARCHAR({target_length});')
     if statements:
         await conn.execute_script("\n".join(statements))
