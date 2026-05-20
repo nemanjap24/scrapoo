@@ -22,8 +22,8 @@ class ScrapeMoviesRequest(BaseModel):
         description="Upper bound for number of films to crawl; stops before max_pages if reached first.",
     )
     include_people: bool = Field(
-        default=True,
-        description="Also crawl linked person pages (actors and directors).",
+        default=False,
+        description="Also crawl linked person pages (actors and directors). Disabled by default so film collection stays fast.",
     )
     include_movies: bool = Field(
         default=True,
@@ -58,3 +58,22 @@ class ScrapeJobStatusResponse(BaseModel):
         default=None,
         description="Error details when task failed.",
     )
+
+
+class EnrichPeopleRequest(BaseModel):
+    limit: int = Field(
+        default=100,
+        ge=1,
+        le=10000,
+        description="Maximum number of existing people to enrich in this job.",
+    )
+    only_missing_birth_date: bool = Field(
+        default=True,
+        description="When true, enrich only people whose birth_date is still empty.",
+    )
+
+
+class EnrichPeopleJobResponse(BaseModel):
+    task_id: str
+    limit: int
+    only_missing_birth_date: bool

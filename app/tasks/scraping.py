@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from datetime import date
 from typing import Iterable, Sequence
 
 from tortoise import Tortoise, connections
@@ -11,7 +13,7 @@ from tortoise import Tortoise, connections
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.models import Country, Film, Genre, Person, PersonInFilm
-from app.services.csfd_scraper import crawl_movies
+from app.services.csfd_scraper import CSFDSpider, crawl_movies, crawl_people
 from app.services.sitemap_loader import SitemapResolutionError, expand_sitemaps, resolve_sitemaps
 
 logger = logging.getLogger(__name__)
@@ -55,7 +57,7 @@ def schedule_default_crawl() -> dict:
 @celery_app.task(name="tasks.scraping.scrape_movies")
 def run_scraping_job(
     sitemap_urls: Sequence[str],
-    include_people: bool = True,
+    include_people: bool = False,
     include_movies: bool = True,
     max_films: int | None = None,
 ) -> dict:
@@ -102,6 +104,29 @@ def run_scraping_job(
     return base_response
 
 
+@celery_app.task(name="tasks.scraping.enrich_people")
+def enrich_people_job(
+    limit: int = 100,
+    only_missing_birth_date: bool = True,
+) -> dict:
+    """Enrich existing person stubs by crawling their detail pages."""
+
+    normalized_limit = max(1, int(limit or 100))
+    saved_people, selected_people, chunk_details = asyncio.run(
+        _execute_people_enrichment(
+            limit=normalized_limit,
+            only_missing_birth_date=only_missing_birth_date,
+        )
+    )
+    return {
+        "people_selected": selected_people,
+        "people_enriched": saved_people,
+        "chunk_size": max(1, settings.SCRAPE_CHUNK_SIZE),
+        "chunks_processed": len(chunk_details),
+        "chunk_details": chunk_details,
+    }
+
+
 async def _execute_scrape_pipeline(
     film_seeds: Sequence[str],
     *,
@@ -138,8 +163,8 @@ async def _execute_scrape_pipeline(
                 continue
 
             meta["status"] = "persisting"
-            films_saved = await _persist_films(batch.movies)
             people_saved = await _persist_people(batch.people)
+            films_saved = await _persist_films(batch.movies)
             meta["films_saved"] = films_saved
             meta["people_collected"] = people_saved
             meta["status"] = "completed"
@@ -149,6 +174,53 @@ async def _execute_scrape_pipeline(
     finally:
         await Tortoise.close_connections()
     return total_films, total_people, chunk_details
+
+
+async def _execute_people_enrichment(
+    *,
+    limit: int,
+    only_missing_birth_date: bool,
+) -> tuple[int, int, list[dict]]:
+    await Tortoise.init(db_url=settings.DATABASE_URL, modules={"models": settings.TORTOISE_MODELS})
+    total_people = 0
+    chunk_details: list[dict] = []
+    try:
+        query = Person.all().order_by("id")
+        if only_missing_birth_date:
+            query = query.filter(birth_date__isnull=True)
+        people = await query.limit(limit)
+        seed_urls = [CSFDSpider.build_person_overview_url(person.url) for person in people if person.url]
+        chunk_size = max(1, settings.SCRAPE_CHUNK_SIZE)
+
+        for index, chunk in enumerate(_chunked(seed_urls, chunk_size), start=1):
+            meta: dict = {
+                "chunk": index,
+                "seed_count": len(chunk),
+                "people_enriched": 0,
+                "status": "pending",
+            }
+            try:
+                logger.info("Starting people enrichment chunk %s (%s seeds)", index, len(chunk))
+                batch = crawl_people(
+                    chunk,
+                    request_delay=settings.REQUEST_DELAY,
+                )
+            except Exception as exc:  # pragma: no cover - defensive logging edge
+                meta["status"] = "failed"
+                meta["error"] = str(exc)
+                logger.exception("People enrichment chunk %s failed while crawling", index)
+                chunk_details.append(meta)
+                continue
+
+            meta["status"] = "persisting"
+            people_saved = await _persist_people(batch.people)
+            meta["people_enriched"] = people_saved
+            meta["status"] = "completed"
+            chunk_details.append(meta)
+            total_people += people_saved
+    finally:
+        await Tortoise.close_connections()
+    return total_people, len(seed_urls), chunk_details
 
 
 async def _persist_films(movies: Iterable[dict]) -> int:
@@ -187,12 +259,12 @@ async def _persist_people(people: Iterable[dict]) -> int:
         if not url:
             continue
         default_name = (payload.get("name") or "").strip() or _humanize_slug(csfd_id)
-        occupation = (payload.get("occupation") or "Actor").strip() or "Actor"
-        person, _ = await Person.get_or_create(
+        occupation = (payload.get("occupation") or "").strip()
+        person, created = await Person.get_or_create(
             url=url,
             defaults={
                 "name": default_name,
-                "occupation": occupation,
+                "occupation": occupation or "Actor",
             },
         )
 
@@ -204,10 +276,43 @@ async def _persist_people(people: Iterable[dict]) -> int:
         if occupation and person.occupation != occupation:
             person.occupation = occupation
             updates.append("occupation")
+        birth_date = _parse_birth_date(payload.get("birth_date"))
+        if birth_date and person.birth_date != birth_date:
+            person.birth_date = birth_date
+            updates.append("birth_date")
         if updates:
             await person.save(update_fields=updates)
-        saved += 1
+        if created or updates:
+            saved += 1
     return saved
+
+
+def _parse_birth_date(raw: object) -> date | None:
+    if isinstance(raw, date):
+        return raw
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+
+    iso_match = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", text)
+    if iso_match:
+        year, month, day = (int(part) for part in iso_match.groups())
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+
+    dotted_match = re.search(r"\b(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\b", text)
+    if dotted_match:
+        day, month, year = (int(part) for part in dotted_match.groups())
+        try:
+            return date(year, month, day)
+        except ValueError:
+            return None
+
+    return None
 
 
 def _coerce_film_payload(payload: dict) -> dict | None:
@@ -345,6 +450,7 @@ def _canonical_person_url(raw_url: str | None, csfd_id: str | None) -> str | Non
     base_url = str(settings.BASE_URL).rstrip("/")
     if csfd_id:
         slug = csfd_id.strip().strip("/")
+        slug = slug.split("/", 1)[0]
         if slug:
             return f"{base_url}/tvorca/{slug}/"
     if not raw_url:

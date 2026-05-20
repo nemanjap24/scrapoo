@@ -15,7 +15,13 @@ from .analytics import (
 )
 from .film import FilmCreate, FilmRead, PersonSummary
 from .person import FilmAppearance, PersonRead
-from .scraping import ScrapeJobResponse, ScrapeJobStatusResponse, ScrapeMoviesRequest
+from .scraping import (
+	EnrichPeopleJobResponse,
+	EnrichPeopleRequest,
+	ScrapeJobResponse,
+	ScrapeJobStatusResponse,
+	ScrapeMoviesRequest,
+)
 
 __all__ = [
 	"AnalyticsOverview",
@@ -36,6 +42,8 @@ __all__ = [
 	"PersonSummary",
 	"FilmAppearance",
 	"PersonRead",
+	"EnrichPeopleJobResponse",
+	"EnrichPeopleRequest",
 	"ScrapeJobResponse",
 	"ScrapeJobStatusResponse",
 	"ScrapeMoviesRequest",

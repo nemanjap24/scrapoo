@@ -2,10 +2,19 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from celery.result import AsyncResult
 from fastapi import APIRouter, HTTPException
 
+from app.core.celery_app import celery_app
 from app.models import Person
-from app.schemas import FilmAppearance, PersonRead
+from app.schemas import (
+    EnrichPeopleJobResponse,
+    EnrichPeopleRequest,
+    FilmAppearance,
+    PersonRead,
+    ScrapeJobStatusResponse,
+)
+from app.tasks.scraping import enrich_people_job
 
 router = APIRouter()
 
@@ -34,6 +43,42 @@ async def get_person(person_id: int) -> PersonRead:
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
     return _serialize_person(person)
+
+
+@router.post(
+    "/enrich",
+    response_model=EnrichPeopleJobResponse,
+    summary="Enqueue slow person detail enrichment",
+)
+async def enqueue_people_enrichment(payload: EnrichPeopleRequest) -> EnrichPeopleJobResponse:
+    task = enrich_people_job.delay(payload.limit, payload.only_missing_birth_date)
+    return EnrichPeopleJobResponse(
+        task_id=task.id,
+        limit=payload.limit,
+        only_missing_birth_date=payload.only_missing_birth_date,
+    )
+
+
+@router.get(
+    "/enrich/{task_id}",
+    response_model=ScrapeJobStatusResponse,
+    summary="Get people enrichment task status",
+)
+async def get_people_enrichment_status(task_id: str) -> ScrapeJobStatusResponse:
+    task_result = AsyncResult(task_id, app=celery_app)
+    state = task_result.state
+    ready = task_result.ready()
+    successful = task_result.successful()
+    result_payload = task_result.result if successful and isinstance(task_result.result, dict) else None
+    error_payload = str(task_result.result) if ready and not successful and task_result.result is not None else None
+    return ScrapeJobStatusResponse(
+        task_id=task_id,
+        state=state,
+        ready=ready,
+        successful=successful,
+        result=result_payload,
+        error=error_payload,
+    )
 
 
 def _serialize_person(person: Person) -> PersonRead:
