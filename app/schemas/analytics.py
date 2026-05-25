@@ -82,3 +82,46 @@ class CollaborationAnalytics(BaseModel):
     stats: GraphStats
     top_centrality: List[GraphNodeMetric]
     top_collaborations: List[GraphEdgeMetric]
+
+
+class DegreeDistributionBucket(BaseModel):
+    degree: int
+    count: int
+
+
+class PowerLawAnalytics(BaseModel):
+    alpha: Optional[float] = None
+    xmin: Optional[int] = None
+    r_squared: Optional[float] = None
+    degree_distribution: List[DegreeDistributionBucket]
+
+
+class ClusteringAnalytics(BaseModel):
+    average_clustering: float
+    transitivity: float
+
+
+class PathAnalytics(BaseModel):
+    largest_component_nodes: int
+    largest_component_share: float
+    average_shortest_path_length: Optional[float] = None
+    diameter: Optional[int] = None
+    log_node_count: Optional[float] = None
+    average_path_to_log_ratio: Optional[float] = None
+    sampled: bool = False
+
+
+class CoreAnalytics(BaseModel):
+    max_core_number: int
+    core_size_by_k: List[DegreeDistributionBucket]
+    top_actors: List[GraphNodeMetric]
+
+
+class ActorProjectionAnalytics(BaseModel):
+    stats: GraphStats
+    movie_count: int
+    largest_component_count: int
+    power_law: PowerLawAnalytics
+    clustering: ClusteringAnalytics
+    path: PathAnalytics
+    core: CoreAnalytics

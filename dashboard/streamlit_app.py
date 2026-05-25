@@ -150,6 +150,107 @@ def render_network() -> None:
     _render_network_graph(data["top_centrality"], data["top_collaborations"])
 
 
+def _format_optional(value: Any, digits: int = 3) -> str:
+    if value is None:
+        return "n/a"
+    if isinstance(value, float):
+        return f"{value:.{digits}f}"
+    return str(value)
+
+
+def render_graph_analysis() -> None:
+    max_diameter_nodes = st.sidebar.slider(
+        "Max nodes for exact diameter",
+        min_value=100,
+        max_value=5000,
+        value=1000,
+        step=100,
+    )
+    max_cast_size = st.sidebar.slider("Max cast size", min_value=2, max_value=500, value=30)
+    top_core_actors = st.sidebar.slider("Top core actors", min_value=5, max_value=100, value=25, step=5)
+    min_core_degree = st.sidebar.slider("Minimum degree for core table", min_value=0, max_value=100, value=1)
+    data = fetch_json(
+        "/analytics/network/actor-projection",
+        params={
+            "max_diameter_nodes": max_diameter_nodes,
+            "max_cast_size": max_cast_size,
+            "top_core_actors": top_core_actors,
+            "min_core_actor_degree": min_core_degree,
+        },
+    )
+
+    stats = data["stats"]
+    cols = st.columns(4)
+    cols[0].metric("Actors", f"{stats['node_count']:,}")
+    cols[1].metric("Collaborations", f"{stats['edge_count']:,}")
+    cols[2].metric("Films Used", f"{data['movie_count']:,}")
+    cols[3].metric("Largest Component", f"{data['largest_component_count']:,}")
+
+    tabs = st.tabs(("Power Law", "High-Cluster", "Log-Average Path", "Core-Like Structure"))
+
+    with tabs[0]:
+        power_law = data["power_law"]
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Alpha", _format_optional(power_law.get("alpha")))
+        metric_cols[1].metric("xmin", _format_optional(power_law.get("xmin"), digits=0))
+        metric_cols[2].metric("Log-log R2", _format_optional(power_law.get("r_squared")))
+        degree_df = pd.DataFrame(power_law["degree_distribution"])
+        if degree_df.empty:
+            st.info("Not enough actor collaborations to build a degree distribution.")
+        else:
+            fig = px.scatter(
+                degree_df,
+                x="degree",
+                y="count",
+                log_x=True,
+                log_y=True,
+                title="Actor Degree Distribution",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(degree_df, use_container_width=True)
+
+    with tabs[1]:
+        clustering = data["clustering"]
+        metric_cols = st.columns(2)
+        metric_cols[0].metric("Average Clustering", _format_optional(clustering["average_clustering"]))
+        metric_cols[1].metric("Transitivity", _format_optional(clustering["transitivity"]))
+        st.caption("Actor projection graphs often cluster strongly because each movie cast creates many actor pairs.")
+
+    with tabs[2]:
+        path = data["path"]
+        metric_cols = st.columns(4)
+        metric_cols[0].metric("LCC Nodes", f"{path['largest_component_nodes']:,}")
+        metric_cols[1].metric("LCC Share", f"{path['largest_component_share']:.1%}")
+        metric_cols[2].metric("Avg Shortest Path", _format_optional(path["average_shortest_path_length"]))
+        metric_cols[3].metric("Diameter", _format_optional(path["diameter"], digits=0))
+        compare_cols = st.columns(2)
+        compare_cols[0].metric("log(n)", _format_optional(path["log_node_count"]))
+        compare_cols[1].metric("Avg Path / log(n)", _format_optional(path["average_path_to_log_ratio"]))
+        if path.get("sampled"):
+            st.info(
+                "Average shortest path is sampled and diameter is skipped because the largest component is above the configured exact limit."
+            )
+
+    with tabs[3]:
+        core = data["core"]
+        st.metric("Max Core Number", core["max_core_number"])
+        core_df = pd.DataFrame(core["core_size_by_k"])
+        if not core_df.empty:
+            fig = px.bar(core_df, x="degree", y="count", title="Core Number Distribution")
+            fig.update_xaxes(title_text="Core number")
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(core_df.rename(columns={"degree": "core_number"}), use_container_width=True)
+        actors_df = pd.DataFrame(core["top_actors"])
+        st.subheader("Top Core Actors")
+        if actors_df.empty:
+            st.info("No core actors to show yet.")
+        else:
+            st.dataframe(
+                actors_df.rename(columns={"value": "core_number"}),
+                use_container_width=True,
+            )
+
+
 def main() -> None:
     st.set_page_config(page_title="Scrapoo Dashboard", layout="wide")
     st.title("Scrapoo Analytics Dashboard")
@@ -162,6 +263,7 @@ def main() -> None:
             "Countries",
             "Releases",
             "Network",
+            "Graph Analysis",
         ),
     )
     if section == "Overview":
@@ -172,8 +274,10 @@ def main() -> None:
         render_countries()
     elif section == "Releases":
         render_releases()
-    else:
+    elif section == "Network":
         render_network()
+    else:
+        render_graph_analysis()
 
 
 if __name__ == "__main__":

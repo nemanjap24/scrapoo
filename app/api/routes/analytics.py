@@ -10,20 +10,26 @@ from tortoise.functions import Count
 from app.models import Country, Film, Person
 from app.schemas import (
     AnalyticsOverview,
+    ActorProjectionAnalytics,
     CollaborationAnalytics,
+    ClusteringAnalytics,
+    CoreAnalytics,
     CountriesAnalytics,
     CountryShareStats,
     CountryStats,
+    DegreeDistributionBucket,
     GraphEdgeMetric,
     GraphNodeMetric,
     GraphStats,
     PeopleAnalytics,
     PersonStats,
+    PathAnalytics,
+    PowerLawAnalytics,
     ReleaseAnalytics,
     ReleaseBucketStats,
     RolePeopleStats,
 )
-from app.services.graph_analytics import compute_collaboration_metrics
+from app.services.graph_analytics import compute_actor_projection_analysis, compute_collaboration_metrics
 
 router = APIRouter()
 
@@ -198,6 +204,73 @@ async def analytics_network_collaboration(
         stats=stats,
         top_centrality=top_nodes,
         top_collaborations=top_edges,
+    )
+
+
+@router.get(
+    "/network/actor-projection",
+    response_model=ActorProjectionAnalytics,
+    summary="Actor projection graph analysis",
+)
+async def analytics_actor_projection(
+    max_diameter_nodes: int = Query(1000, ge=2, le=5000),
+    max_cast_size: int = Query(30, ge=2, le=500),
+    top_core_actors: int = Query(25, ge=1, le=100),
+    min_core_actor_degree: int = Query(1, ge=0, le=500),
+) -> ActorProjectionAnalytics:
+    result = await compute_actor_projection_analysis(
+        max_diameter_nodes=max_diameter_nodes,
+        max_cast_size=max_cast_size,
+        top_core_actors=top_core_actors,
+        min_core_actor_degree=min_core_actor_degree,
+    )
+    return ActorProjectionAnalytics(
+        stats=GraphStats(
+            node_count=result.stats.node_count,
+            edge_count=result.stats.edge_count,
+            density=result.stats.density,
+            average_degree=result.stats.average_degree,
+        ),
+        movie_count=result.movie_count,
+        largest_component_count=result.largest_component_count,
+        power_law=PowerLawAnalytics(
+            alpha=result.power_law.alpha,
+            xmin=result.power_law.xmin,
+            r_squared=result.power_law.r_squared,
+            degree_distribution=[
+                DegreeDistributionBucket(degree=bucket.degree, count=bucket.count)
+                for bucket in result.power_law.degree_distribution
+            ],
+        ),
+        clustering=ClusteringAnalytics(
+            average_clustering=result.clustering.average_clustering,
+            transitivity=result.clustering.transitivity,
+        ),
+        path=PathAnalytics(
+            largest_component_nodes=result.path.largest_component_nodes,
+            largest_component_share=result.path.largest_component_share,
+            average_shortest_path_length=result.path.average_shortest_path_length,
+            diameter=result.path.diameter,
+            log_node_count=result.path.log_node_count,
+            average_path_to_log_ratio=result.path.average_path_to_log_ratio,
+            sampled=result.path.sampled,
+        ),
+        core=CoreAnalytics(
+            max_core_number=result.core.max_core_number,
+            core_size_by_k=[
+                DegreeDistributionBucket(degree=bucket.degree, count=bucket.count)
+                for bucket in result.core.core_size_by_k
+            ],
+            top_actors=[
+                GraphNodeMetric(
+                    person_id=actor.person_id,
+                    name=actor.name,
+                    occupation=actor.occupation,
+                    value=actor.value,
+                )
+                for actor in result.core.top_actors
+            ],
+        ),
     )
 
 
