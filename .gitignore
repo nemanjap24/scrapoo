@@ -12,3 +12,7 @@
 archive/*
 .idea/*
 .gitignore
+celerybeat-schedule
+movie-example.txt
+person-example.txt
+

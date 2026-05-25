@@ -63,7 +63,7 @@ Fast film collection starts either when someone calls the API endpoint `POST /ap
 
 After the sitemap files are selected, the API does not scrape immediately. It creates a Celery background job and returns a task ID. The client can then use that task ID to check progress through `GET /api/v1/movies/scrape/{task_id}`.
 
-The Celery worker receives the job and opens each selected sitemap. From those sitemap files it collects film URLs. If the request has a `max_films` limit, it stops collecting URLs once that limit is reached. If movie scraping is disabled, or no film URLs are found, the job finishes with zero saved films.
+The Celery worker receives the job and opens each selected sitemap. From those sitemap files it collects film URLs. If the request has a `max_films` limit, it stops collecting URLs once that limit is reached. If `skip_existing=true`, the worker removes URLs already present in `film.url` before crawling. If movie scraping is disabled, or no film URLs are found after filtering, the job finishes with zero saved films.
 
 When film URLs are available, the worker splits them into chunks using `SCRAPE_CHUNK_SIZE`. It dispatches those chunks to Celery in parallel waves controlled by `SCRAPE_PARALLEL_CHUNKS`, which defaults to 4. This keeps large jobs more manageable, lets multiple Scrapy helper processes crawl at the same time, and lets the final task result show which chunks completed or failed.
 
@@ -116,6 +116,8 @@ schedule_default_crawl():
 
 run_scraping_job(sitemap_urls, include_people, include_movies, max_films):
     film_seeds = expand_sitemaps(sitemap_urls, include_movies, max_films)
+    if skip_existing:
+        film_seeds = remove URLs already present in film.url
     if film_seeds is empty:
         return zero-count result
 

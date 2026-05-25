@@ -33,7 +33,8 @@ curl -X POST http://localhost:8000/api/v1/movies/scrape \
 			"max_pages": 1,
 			"max_films": 1000,
 			"include_people": false,
-			"include_movies": true
+			"include_movies": true,
+			"skip_existing": false
 		}'
 ```
 
@@ -52,6 +53,8 @@ Available POST body options:
   actor/director also gets a dedicated person crawl during the film scrape.
 - `include_movies` _(bool, default true)_ – future-proof flag for creator-only runs. Leave true unless you
   deliberately want to ignore film URLs.
+- `skip_existing` _(bool, default false)_ – when true, the worker filters out film URLs that already exist in
+  `film.url` before crawling. Useful for repeated sitemap runs.
 
 After enqueueing a scrape, poll task state via:
 

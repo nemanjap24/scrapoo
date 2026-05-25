@@ -63,6 +63,7 @@ async def enqueue_scrape(payload: ScrapeMoviesRequest) -> ScrapeJobResponse:
         payload.include_people,
         payload.include_movies,
         payload.max_films,
+        payload.skip_existing,
     )
 
     return ScrapeJobResponse(
@@ -72,6 +73,7 @@ async def enqueue_scrape(payload: ScrapeMoviesRequest) -> ScrapeJobResponse:
         max_films=payload.max_films,
         include_people=payload.include_people,
         include_movies=payload.include_movies,
+        skip_existing=payload.skip_existing,
         sitemaps=sitemap_urls,
         queued=len(sitemap_urls),
     )

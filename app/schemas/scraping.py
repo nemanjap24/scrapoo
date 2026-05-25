@@ -29,6 +29,10 @@ class ScrapeMoviesRequest(BaseModel):
         default=True,
         description="When false, movie URLs are ignored (primarily for future creator-only crawls).",
     )
+    skip_existing: bool = Field(
+        default=False,
+        description="When true, skip film URLs that already exist in the database before crawling.",
+    )
 
 
 class ScrapeJobResponse(BaseModel):
@@ -38,6 +42,7 @@ class ScrapeJobResponse(BaseModel):
     max_films: Optional[int] = None
     include_people: bool
     include_movies: bool
+    skip_existing: bool = False
     sitemaps: List[str] = Field(default_factory=list)
     queued: int = Field(
         default=0,

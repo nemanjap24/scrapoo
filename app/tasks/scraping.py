@@ -63,22 +63,29 @@ def run_scraping_job(
     include_people: bool = False,
     include_movies: bool = True,
     max_films: int | None = None,
+    skip_existing: bool = False,
 ) -> dict:
     """Expand sitemap files into seeds and persist crawled movies."""
 
+    started_at = time.monotonic()
     film_seeds = expand_sitemaps(
         sitemap_urls,
         include_movies=include_movies,
         max_films=max_films,
     )
+    discovered_seed_count = len(film_seeds)
+    if skip_existing and film_seeds:
+        film_seeds = asyncio.run(_filter_existing_film_urls(film_seeds))
     chunk_size = max(1, settings.SCRAPE_CHUNK_SIZE)
     parallel_chunks = max(1, settings.SCRAPE_PARALLEL_CHUNKS)
-    started_at = time.monotonic()
     base_response = {
         "seeds": film_seeds,
         "sitemaps": list(sitemap_urls),
         "chunk_size": chunk_size,
         "parallel_chunks": parallel_chunks,
+        "skip_existing": skip_existing,
+        "seeds_discovered": discovered_seed_count,
+        "seeds_skipped_existing": discovered_seed_count - len(film_seeds),
     }
     if not film_seeds:
         base_response.update(
@@ -245,6 +252,17 @@ async def _execute_scrape_pipeline(
     finally:
         await Tortoise.close_connections()
     return total_films, total_people, chunk_details
+
+
+async def _filter_existing_film_urls(film_seeds: Sequence[str]) -> list[str]:
+    await Tortoise.init(db_url=settings.DATABASE_URL, modules={"models": settings.TORTOISE_MODELS})
+    try:
+        existing_urls = set(
+            await Film.filter(url__in=list(film_seeds)).values_list("url", flat=True)
+        )
+        return [url for url in film_seeds if url not in existing_urls]
+    finally:
+        await Tortoise.close_connections()
 
 
 async def _execute_people_enrichment(
