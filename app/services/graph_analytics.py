@@ -54,6 +54,7 @@ class DegreeBucket:
 class ClusteringMetric:
     average_clustering: float
     transitivity: float
+    coefficient_distribution: List[DegreeBucket]
 
 
 @dataclass
@@ -65,6 +66,7 @@ class PathMetric:
     log_node_count: float | None
     average_path_to_log_ratio: float | None
     sampled: bool
+    length_distribution: List[DegreeBucket]
 
 
 @dataclass
@@ -72,6 +74,31 @@ class CoreMetric:
     max_core_number: int
     core_size_by_k: List[DegreeBucket]
     top_actors: List[NodeMetric]
+
+
+@dataclass
+class CommunityNodeMetric:
+    community_id: int
+    actor_count: int
+    internal_edge_count: int
+    internal_weight: int
+    top_actors: List[NodeMetric]
+
+
+@dataclass
+class CommunityEdgeMetric:
+    source_community: int
+    target_community: int
+    weight: int
+
+
+@dataclass
+class CommunityMetric:
+    algorithm: str
+    community_count: int
+    modularity: float | None
+    nodes: List[CommunityNodeMetric]
+    edges: List[CommunityEdgeMetric]
 
 
 @dataclass
@@ -91,6 +118,9 @@ class GraphAnalysisResult:
     clustering: ClusteringMetric
     path: PathMetric
     core: CoreMetric
+    communities: CommunityMetric
+    graph_nodes: List[NodeMetric]
+    graph_edges: List[EdgeMetric]
 
 
 async def compute_collaboration_metrics(
@@ -180,11 +210,29 @@ async def compute_actor_projection_analysis(
                 log_node_count=None,
                 average_path_to_log_ratio=None,
                 sampled=False,
+                length_distribution=[],
             ),
             core=CoreMetric(max_core_number=0, core_size_by_k=[], top_actors=[]),
+            communities=CommunityMetric(
+                algorithm="leiden",
+                community_count=0,
+                modularity=None,
+                nodes=[],
+                edges=[],
+            ),
+            graph_nodes=[],
+            graph_edges=[],
         )
 
     person_meta = await _load_person_meta(graph.nodes)
+    core_metric = _compute_core_metric(
+        graph,
+        person_meta,
+        limit=top_core_actors,
+        min_degree=min_core_actor_degree,
+    )
+    graph_nodes, graph_edges = _build_core_graph_sample(graph, person_meta, core_metric.top_actors)
+    communities = _compute_leiden_communities(graph, person_meta)
     return GraphAnalysisResult(
         stats=stats,
         movie_count=len(film_members),
@@ -192,12 +240,10 @@ async def compute_actor_projection_analysis(
         power_law=_compute_power_law_metric(graph),
         clustering=_compute_clustering_metric(graph),
         path=_compute_path_metric(graph, max_diameter_nodes=max_diameter_nodes),
-        core=_compute_core_metric(
-            graph,
-            person_meta,
-            limit=top_core_actors,
-            min_degree=min_core_actor_degree,
-        ),
+        core=core_metric,
+        communities=communities,
+        graph_nodes=graph_nodes,
+        graph_edges=graph_edges,
     )
 
 
@@ -293,25 +339,38 @@ def _compute_power_law_metric(graph: nx.Graph) -> PowerLawMetric:
 
 def _compute_clustering_metric(graph: nx.Graph) -> ClusteringMetric:
     if graph.number_of_nodes() == 0:
-        return ClusteringMetric(average_clustering=0.0, transitivity=0.0)
+        return ClusteringMetric(average_clustering=0.0, transitivity=0.0, coefficient_distribution=[])
+    local_coefficients = nx.clustering(graph)
+    bucket_counts: Counter[int] = Counter()
+    for value in local_coefficients.values():
+        bucket = int(round(float(value) * 20))
+        bucket_counts[bucket] += 1
     return ClusteringMetric(
         average_clustering=float(nx.average_clustering(graph)),
         transitivity=float(nx.transitivity(graph)),
+        coefficient_distribution=[
+            DegreeBucket(degree=bucket, count=count)
+            for bucket, count in sorted(bucket_counts.items())
+        ],
     )
 
 
 def _compute_path_metric(graph: nx.Graph, *, max_diameter_nodes: int) -> PathMetric:
     if graph.number_of_nodes() == 0:
-        return PathMetric(0, 0.0, None, None, None, None, False)
+        return PathMetric(0, 0.0, None, None, None, None, False, [])
     largest_nodes = max(nx.connected_components(graph), key=len)
     subgraph = graph.subgraph(largest_nodes)
     node_count = subgraph.number_of_nodes()
     if node_count < 2:
-        return PathMetric(node_count, node_count / graph.number_of_nodes(), None, None, None, None, False)
+        return PathMetric(node_count, node_count / graph.number_of_nodes(), None, None, None, None, False, [])
 
     sampled = node_count > max_diameter_nodes
+    length_distribution = _sample_shortest_path_distribution(
+        subgraph,
+        sample_sources=25 if sampled else min(node_count, 100),
+    )
     if sampled:
-        average_path = _sample_average_shortest_path_length(subgraph, sample_sources=25)
+        average_path = _average_from_distribution(length_distribution)
         diameter = None
     else:
         average_path = float(nx.average_shortest_path_length(subgraph))
@@ -325,23 +384,36 @@ def _compute_path_metric(graph: nx.Graph, *, max_diameter_nodes: int) -> PathMet
         log_node_count=log_node_count,
         average_path_to_log_ratio=(average_path / log_node_count) if log_node_count > 0 else None,
         sampled=sampled,
+        length_distribution=length_distribution,
     )
 
 
-def _sample_average_shortest_path_length(graph: nx.Graph, *, sample_sources: int) -> float:
+def _sample_shortest_path_distribution(graph: nx.Graph, *, sample_sources: int) -> List[DegreeBucket]:
     nodes = sorted(graph.nodes)
     if len(nodes) <= sample_sources:
         selected_nodes = nodes
     else:
         step = max(1, len(nodes) // sample_sources)
         selected_nodes = nodes[::step][:sample_sources]
-    total_distance = 0
-    pair_count = 0
+    distances: Counter[int] = Counter()
     for node in selected_nodes:
         lengths = nx.single_source_shortest_path_length(graph, node)
-        total_distance += sum(distance for target, distance in lengths.items() if target != node)
-        pair_count += max(0, len(lengths) - 1)
-    return (total_distance / pair_count) if pair_count else 0.0
+        for target, distance in lengths.items():
+            if target == node:
+                continue
+            distances[int(distance)] += 1
+    return [
+        DegreeBucket(degree=distance, count=count)
+        for distance, count in sorted(distances.items())
+    ]
+
+
+def _average_from_distribution(distribution: List[DegreeBucket]) -> float:
+    total_count = sum(bucket.count for bucket in distribution)
+    if not total_count:
+        return 0.0
+    total_distance = sum(bucket.degree * bucket.count for bucket in distribution)
+    return total_distance / total_count
 
 
 def _compute_core_metric(
@@ -379,6 +451,157 @@ def _compute_core_metric(
         if len(top_actors) >= limit:
             break
     return CoreMetric(max_core_number=int(max_core), core_size_by_k=sizes, top_actors=top_actors)
+
+
+def _build_core_graph_sample(
+    graph: nx.Graph,
+    person_meta: Dict[int, Tuple[str | None, str | None]],
+    core_actors: List[NodeMetric],
+) -> Tuple[List[NodeMetric], List[EdgeMetric]]:
+    selected_ids = {actor.person_id for actor in core_actors[:30]}
+    if len(selected_ids) < 2:
+        return [], []
+
+    subgraph = graph.subgraph(selected_ids)
+    node_metrics: List[NodeMetric] = []
+    for person_id in sorted(subgraph.nodes, key=lambda pid: (-graph.degree[pid], _safe_name(person_meta.get(int(pid))))):
+        name, occupation = person_meta.get(int(person_id), (None, None))
+        node_metrics.append(
+            NodeMetric(
+                person_id=int(person_id),
+                name=name,
+                occupation=occupation,
+                value=float(graph.degree[person_id]),
+            )
+        )
+
+    ranked_edges = sorted(
+        subgraph.edges(data=True),
+        key=lambda item: (-int(item[2].get("weight", 1)), _safe_name(person_meta.get(int(item[0])))),
+    )[:100]
+    edge_metrics: List[EdgeMetric] = []
+    for source_id, target_id, data in ranked_edges:
+        source_meta = person_meta.get(int(source_id), (None, None))
+        target_meta = person_meta.get(int(target_id), (None, None))
+        edge_metrics.append(
+            EdgeMetric(
+                source_id=int(source_id),
+                source_name=source_meta[0],
+                target_id=int(target_id),
+                target_name=target_meta[0],
+                weight=int(data.get("weight", 1)),
+            )
+        )
+    return node_metrics, edge_metrics
+
+
+def _compute_leiden_communities(
+    graph: nx.Graph,
+    person_meta: Dict[int, Tuple[str | None, str | None]],
+) -> CommunityMetric:
+    if graph.number_of_nodes() == 0:
+        return CommunityMetric("leiden", 0, None, [], [])
+
+    try:
+        import igraph as ig
+    except ImportError as exc:
+        raise RuntimeError(
+            "Leiden community detection requires the python-igraph package. "
+            "Install project requirements before calling actor projection analytics."
+        ) from exc
+
+    ordered_nodes = sorted(int(node) for node in graph.nodes)
+    node_to_index = {node_id: index for index, node_id in enumerate(ordered_nodes)}
+    igraph_graph = ig.Graph()
+    igraph_graph.add_vertices(len(ordered_nodes))
+
+    weighted_edges: list[tuple[int, int]] = []
+    weights: list[int] = []
+    for source_id, target_id, data in graph.edges(data=True):
+        weighted_edges.append((node_to_index[int(source_id)], node_to_index[int(target_id)]))
+        weights.append(int(data.get("weight", 1)))
+    if weighted_edges:
+        igraph_graph.add_edges(weighted_edges)
+        igraph_graph.es["weight"] = weights
+
+    clustering = igraph_graph.community_leiden(
+        objective_function="modularity",
+        weights="weight" if weighted_edges else None,
+    )
+    membership = list(clustering.membership)
+    community_count = (max(membership) + 1) if membership else 0
+    node_to_community = {
+        node_id: int(membership[node_to_index[node_id]])
+        for node_id in ordered_nodes
+    }
+
+    community_members: dict[int, list[int]] = defaultdict(list)
+    for node_id, community_id in node_to_community.items():
+        community_members[community_id].append(node_id)
+
+    internal_edge_counts: Counter[int] = Counter()
+    internal_weights: Counter[int] = Counter()
+    cross_weights: Counter[tuple[int, int]] = Counter()
+    for source_id, target_id, data in graph.edges(data=True):
+        source_community = node_to_community[int(source_id)]
+        target_community = node_to_community[int(target_id)]
+        weight = int(data.get("weight", 1))
+        if source_community == target_community:
+            internal_edge_counts[source_community] += 1
+            internal_weights[source_community] += weight
+            continue
+        edge_key = tuple(sorted((source_community, target_community)))
+        cross_weights[edge_key] += weight
+
+    community_nodes: list[CommunityNodeMetric] = []
+    for community_id, members in sorted(
+        community_members.items(),
+        key=lambda item: (-len(item[1]), item[0]),
+    ):
+        ranked_members = sorted(
+            members,
+            key=lambda node_id: (-graph.degree[node_id], _safe_name(person_meta.get(node_id)), node_id),
+        )
+        top_actors: list[NodeMetric] = []
+        for person_id in ranked_members[:5]:
+            name, occupation = person_meta.get(person_id, (None, None))
+            top_actors.append(
+                NodeMetric(
+                    person_id=person_id,
+                    name=name,
+                    occupation=occupation,
+                    value=float(graph.degree[person_id]),
+                )
+            )
+        community_nodes.append(
+            CommunityNodeMetric(
+                community_id=community_id,
+                actor_count=len(members),
+                internal_edge_count=int(internal_edge_counts[community_id]),
+                internal_weight=int(internal_weights[community_id]),
+                top_actors=top_actors,
+            )
+        )
+
+    community_edges = [
+        CommunityEdgeMetric(
+            source_community=source_community,
+            target_community=target_community,
+            weight=int(weight),
+        )
+        for (source_community, target_community), weight in sorted(
+            cross_weights.items(),
+            key=lambda item: (-item[1], item[0][0], item[0][1]),
+        )
+    ]
+    modularity = float(igraph_graph.modularity(membership, weights=weights or None)) if membership else None
+    return CommunityMetric(
+        algorithm="leiden",
+        community_count=community_count,
+        modularity=modularity,
+        nodes=community_nodes,
+        edges=community_edges,
+    )
 
 
 def _compute_top_centrality(

@@ -99,6 +99,7 @@ class PowerLawAnalytics(BaseModel):
 class ClusteringAnalytics(BaseModel):
     average_clustering: float
     transitivity: float
+    coefficient_distribution: List[DegreeDistributionBucket]
 
 
 class PathAnalytics(BaseModel):
@@ -109,12 +110,35 @@ class PathAnalytics(BaseModel):
     log_node_count: Optional[float] = None
     average_path_to_log_ratio: Optional[float] = None
     sampled: bool = False
+    length_distribution: List[DegreeDistributionBucket]
 
 
 class CoreAnalytics(BaseModel):
     max_core_number: int
     core_size_by_k: List[DegreeDistributionBucket]
     top_actors: List[GraphNodeMetric]
+
+
+class CommunityNodeMetric(BaseModel):
+    community_id: int
+    actor_count: int
+    internal_edge_count: int
+    internal_weight: int
+    top_actors: List[GraphNodeMetric]
+
+
+class CommunityEdgeMetric(BaseModel):
+    source_community: int
+    target_community: int
+    weight: int
+
+
+class CommunityAnalytics(BaseModel):
+    algorithm: str
+    community_count: int
+    modularity: Optional[float] = None
+    nodes: List[CommunityNodeMetric]
+    edges: List[CommunityEdgeMetric]
 
 
 class ActorProjectionAnalytics(BaseModel):
@@ -125,3 +149,6 @@ class ActorProjectionAnalytics(BaseModel):
     clustering: ClusteringAnalytics
     path: PathAnalytics
     core: CoreAnalytics
+    communities: CommunityAnalytics
+    graph_nodes: List[GraphNodeMetric]
+    graph_edges: List[GraphEdgeMetric]

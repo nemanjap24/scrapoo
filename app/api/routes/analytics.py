@@ -13,6 +13,9 @@ from app.schemas import (
     ActorProjectionAnalytics,
     CollaborationAnalytics,
     ClusteringAnalytics,
+    CommunityAnalytics,
+    CommunityEdgeMetric,
+    CommunityNodeMetric,
     CoreAnalytics,
     CountriesAnalytics,
     CountryShareStats,
@@ -245,6 +248,10 @@ async def analytics_actor_projection(
         clustering=ClusteringAnalytics(
             average_clustering=result.clustering.average_clustering,
             transitivity=result.clustering.transitivity,
+            coefficient_distribution=[
+                DegreeDistributionBucket(degree=bucket.degree, count=bucket.count)
+                for bucket in result.clustering.coefficient_distribution
+            ],
         ),
         path=PathAnalytics(
             largest_component_nodes=result.path.largest_component_nodes,
@@ -254,6 +261,10 @@ async def analytics_actor_projection(
             log_node_count=result.path.log_node_count,
             average_path_to_log_ratio=result.path.average_path_to_log_ratio,
             sampled=result.path.sampled,
+            length_distribution=[
+                DegreeDistributionBucket(degree=bucket.degree, count=bucket.count)
+                for bucket in result.path.length_distribution
+            ],
         ),
         core=CoreAnalytics(
             max_core_number=result.core.max_core_number,
@@ -271,6 +282,56 @@ async def analytics_actor_projection(
                 for actor in result.core.top_actors
             ],
         ),
+        communities=CommunityAnalytics(
+            algorithm=result.communities.algorithm,
+            community_count=result.communities.community_count,
+            modularity=result.communities.modularity,
+            nodes=[
+                CommunityNodeMetric(
+                    community_id=node.community_id,
+                    actor_count=node.actor_count,
+                    internal_edge_count=node.internal_edge_count,
+                    internal_weight=node.internal_weight,
+                    top_actors=[
+                        GraphNodeMetric(
+                            person_id=actor.person_id,
+                            name=actor.name,
+                            occupation=actor.occupation,
+                            value=actor.value,
+                        )
+                        for actor in node.top_actors
+                    ],
+                )
+                for node in result.communities.nodes
+            ],
+            edges=[
+                CommunityEdgeMetric(
+                    source_community=edge.source_community,
+                    target_community=edge.target_community,
+                    weight=edge.weight,
+                )
+                for edge in result.communities.edges
+            ],
+        ),
+        graph_nodes=[
+            GraphNodeMetric(
+                person_id=node.person_id,
+                name=node.name,
+                occupation=node.occupation,
+                value=node.value,
+            )
+            for node in result.graph_nodes
+        ],
+        graph_edges=[
+            GraphEdgeMetric(
+                source_id=edge.source_id,
+                source_name=edge.source_name,
+                target_id=edge.target_id,
+                target_name=edge.target_name,
+                weight=edge.weight,
+            )
+            for edge in result.graph_edges
+        ],
     )
 
 

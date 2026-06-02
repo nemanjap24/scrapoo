@@ -126,6 +126,60 @@ def _render_network_graph(nodes: list[Dict[str, Any]], edges: list[Dict[str, Any
     os.unlink(tmp_file.name)
 
 
+def _render_community_graph(communities: Dict[str, Any]) -> None:
+    nodes = communities.get("nodes", [])
+    edges = communities.get("edges", [])
+    if not nodes:
+        st.info("No actor communities to visualize yet.")
+        return
+
+    node_ids = {int(node["community_id"]) for node in nodes}
+    net = Network(height="650px", width="100%", bgcolor="#0E1117", font_color="#FAFAFA")
+    net.barnes_hut(gravity=-4500, central_gravity=0.25, spring_length=180, spring_strength=0.02)
+
+    for node in nodes:
+        community_id = int(node["community_id"])
+        top_names = [
+            actor.get("name") or f"Person {actor['person_id']}"
+            for actor in node.get("top_actors", [])
+        ]
+        title_parts = [
+            f"Community {community_id}",
+            f"Actors: {node['actor_count']}",
+            f"Internal collaborations: {node['internal_edge_count']}",
+            f"Internal weight: {node['internal_weight']}",
+        ]
+        if top_names:
+            title_parts.append(f"Top actors: {', '.join(top_names)}")
+        net.add_node(
+            community_id,
+            label=f"C{community_id}",
+            title="<br>".join(title_parts),
+            value=max(int(node["actor_count"]), 1),
+            group=community_id,
+        )
+
+    for edge in edges:
+        source = int(edge["source_community"])
+        target = int(edge["target_community"])
+        if source not in node_ids or target not in node_ids:
+            continue
+        weight = int(edge.get("weight", 1))
+        net.add_edge(
+            source,
+            target,
+            value=weight,
+            title=f"{weight} cross-community collaborations",
+        )
+
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".html", delete=False) as tmp_file:
+        net.save_graph(tmp_file.name)
+        tmp_file.seek(0)
+        html_content = tmp_file.read()
+    components_html(html_content, height=700, scrolling=True)
+    os.unlink(tmp_file.name)
+
+
 def render_network() -> None:
     limit_nodes = st.slider("Top central people", min_value=5, max_value=50, value=10)
     limit_edges = st.slider("Top collaborations", min_value=5, max_value=50, value=10)
@@ -186,9 +240,44 @@ def render_graph_analysis() -> None:
     cols[2].metric("Films Used", f"{data['movie_count']:,}")
     cols[3].metric("Largest Component", f"{data['largest_component_count']:,}")
 
-    tabs = st.tabs(("Power Law", "High-Cluster", "Log-Average Path", "Core-Like Structure"))
+    tabs = st.tabs(
+        (
+            "Network Graph",
+            "Communities",
+            "Power Law",
+            "High-Cluster",
+            "Log-Average Path",
+            "Core-Like Structure",
+        )
+    )
 
     with tabs[0]:
+        st.subheader("Core Actor Network")
+        _render_network_graph(data["graph_nodes"], data["graph_edges"])
+
+    with tabs[1]:
+        communities = data["communities"]
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Algorithm", communities["algorithm"].title())
+        metric_cols[1].metric("Communities", f"{communities['community_count']:,}")
+        metric_cols[2].metric("Modularity", _format_optional(communities.get("modularity")))
+        st.subheader("Leiden Community Graph")
+        _render_community_graph(communities)
+
+        community_df = pd.DataFrame(communities["nodes"])
+        if not community_df.empty:
+            community_df["top_actors"] = community_df["top_actors"].apply(
+                lambda actors: ", ".join(
+                    actor.get("name") or f"Person {actor['person_id']}"
+                    for actor in actors
+                )
+            )
+            st.dataframe(
+                community_df.sort_values("actor_count", ascending=False),
+                use_container_width=True,
+            )
+
+    with tabs[2]:
         power_law = data["power_law"]
         metric_cols = st.columns(3)
         metric_cols[0].metric("Alpha", _format_optional(power_law.get("alpha")))
@@ -209,14 +298,25 @@ def render_graph_analysis() -> None:
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(degree_df, use_container_width=True)
 
-    with tabs[1]:
+    with tabs[3]:
         clustering = data["clustering"]
         metric_cols = st.columns(2)
         metric_cols[0].metric("Average Clustering", _format_optional(clustering["average_clustering"]))
         metric_cols[1].metric("Transitivity", _format_optional(clustering["transitivity"]))
+        cluster_df = pd.DataFrame(clustering["coefficient_distribution"])
+        if not cluster_df.empty:
+            cluster_df["coefficient"] = cluster_df["degree"] / 20
+            fig = px.bar(
+                cluster_df,
+                x="coefficient",
+                y="count",
+                title="Local Clustering Coefficient Distribution",
+            )
+            fig.update_xaxes(title_text="Local clustering coefficient", tickformat=".2f")
+            st.plotly_chart(fig, use_container_width=True)
         st.caption("Actor projection graphs often cluster strongly because each movie cast creates many actor pairs.")
 
-    with tabs[2]:
+    with tabs[4]:
         path = data["path"]
         metric_cols = st.columns(4)
         metric_cols[0].metric("LCC Nodes", f"{path['largest_component_nodes']:,}")
@@ -230,8 +330,18 @@ def render_graph_analysis() -> None:
             st.info(
                 "Average shortest path is sampled and diameter is skipped because the largest component is above the configured exact limit."
             )
+        path_df = pd.DataFrame(path["length_distribution"])
+        if not path_df.empty:
+            fig = px.bar(
+                path_df,
+                x="degree",
+                y="count",
+                title="Shortest Path Length Distribution",
+            )
+            fig.update_xaxes(title_text="Path length")
+            st.plotly_chart(fig, use_container_width=True)
 
-    with tabs[3]:
+    with tabs[5]:
         core = data["core"]
         st.metric("Max Core Number", core["max_core_number"])
         core_df = pd.DataFrame(core["core_size_by_k"])
@@ -245,8 +355,18 @@ def render_graph_analysis() -> None:
         if actors_df.empty:
             st.info("No core actors to show yet.")
         else:
+            display_df = actors_df.rename(columns={"value": "core_number"})
+            chart_df = display_df.sort_values(["core_number", "name"], ascending=[True, True]).tail(25)
+            fig = px.bar(
+                chart_df,
+                x="core_number",
+                y="name",
+                orientation="h",
+                title="Top Actors by Core Number",
+            )
+            st.plotly_chart(fig, use_container_width=True)
             st.dataframe(
-                actors_df.rename(columns={"value": "core_number"}),
+                display_df,
                 use_container_width=True,
             )
 
