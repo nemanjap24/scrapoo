@@ -30,6 +30,8 @@ from .scraping import (
 	ScrapeJobResponse,
 	ScrapeJobStatusResponse,
 	ScrapeMoviesRequest,
+	TMDBScrapeJobResponse,
+	TMDBScrapeRequest,
 )
 
 __all__ = [
@@ -65,4 +67,6 @@ __all__ = [
 	"ScrapeJobResponse",
 	"ScrapeJobStatusResponse",
 	"ScrapeMoviesRequest",
+	"TMDBScrapeJobResponse",
+	"TMDBScrapeRequest",
 ]

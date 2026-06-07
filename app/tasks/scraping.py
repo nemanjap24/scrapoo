@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.models import Country, Film, Genre, Person, PersonInFilm
 from app.services.csfd_scraper import CSFDSpider, crawl_movies, crawl_people
 from app.services.sitemap_loader import SitemapResolutionError, expand_sitemaps, resolve_sitemaps
+from app.services.tmdb_client import TMDBClient, TMDBConfigurationError, TMDBRequestError
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,52 @@ def enrich_people_job(
         "chunk_details": chunk_details,
         "duration_seconds": _elapsed_seconds(started_at),
         "people_per_second": _rate(saved_people, started_at),
+    }
+
+
+@celery_app.task(name="tasks.scraping.scrape_tmdb_top_movies")
+def scrape_tmdb_top_movies(
+    limit: int = 3000,
+    language: str = "en-US",
+    include_adult: bool = False,
+    actor_limit: int | None = None,
+) -> dict:
+    """Fetch top TMDB movies by popularity with credits and persist them separately."""
+
+    started_at = time.monotonic()
+    normalized_limit = min(3000, max(1, int(limit or 3000)))
+    try:
+        client = TMDBClient()
+        batch = client.fetch_top_movies_with_credits(
+            limit=normalized_limit,
+            language=language,
+            include_adult=include_adult,
+            actor_limit=actor_limit,
+        )
+        films_saved, people_saved = asyncio.run(_persist_tmdb_batch(batch.movies))
+    except (TMDBConfigurationError, TMDBRequestError) as exc:
+        logger.exception("TMDB ingestion failed")
+        return {
+            "status": "failed",
+            "error": str(exc),
+            "duration_seconds": _elapsed_seconds(started_at),
+        }
+
+    return {
+        "status": "completed",
+        "requested_limit": normalized_limit,
+        "movies_fetched": len(batch.movies),
+        "films_saved": films_saved,
+        "people_saved": people_saved,
+        "pages_requested": batch.pages_requested,
+        "movie_details_requested": batch.movie_details_requested,
+        "tmdb_requests_made": batch.requests_made,
+        "rate_limit": {
+            "requests": settings.TMDB_REQUESTS_PER_WINDOW,
+            "window_seconds": settings.TMDB_RATE_LIMIT_WINDOW_SECONDS,
+        },
+        "duration_seconds": _elapsed_seconds(started_at),
+        "films_per_second": _rate(films_saved, started_at),
     }
 
 
@@ -342,6 +389,43 @@ async def _persist_films(movies: Iterable[dict]) -> int:
     return saved
 
 
+async def _persist_tmdb_batch(movies: Iterable[dict]) -> tuple[int, int]:
+    await Tortoise.init(db_url=settings.TMDB_DATABASE_URL, modules={"models": settings.TORTOISE_MODELS})
+    await Tortoise.generate_schemas(safe=True)
+    await _ensure_film_column_capacity(getattr(Film._meta.fields_map.get("title"), "max_length", 150))
+    await _ensure_url_column_capacity(255)
+    try:
+        return await _persist_tmdb_films(movies)
+    finally:
+        await Tortoise.close_connections()
+
+
+async def _persist_tmdb_films(movies: Iterable[dict]) -> tuple[int, int]:
+    if not movies:
+        return 0, 0
+
+    films_saved = 0
+    people_saved = 0
+    for payload in movies:
+        data = _coerce_film_payload(payload)
+        if not data:
+            continue
+        lookup_url = data.get("url")
+        film: Film | None = None
+        if lookup_url:
+            film, _ = await Film.update_or_create(url=lookup_url, defaults=data)
+        else:
+            film = await Film.create(**data)
+        if not film:
+            continue
+        await _sync_genres(film, payload.get("genres"))
+        people_saved += await _sync_tmdb_people(film, payload.get("directors"), role="director")
+        people_saved += await _sync_tmdb_people(film, payload.get("actors"), role="actor")
+        await _sync_country(film, payload.get("country"))
+        films_saved += 1
+    return films_saved, people_saved
+
+
 async def _persist_people(people: Iterable[dict]) -> int:
     if not people:
         return 0
@@ -427,6 +511,11 @@ def _coerce_film_payload(payload: dict) -> dict | None:
         except ValueError:
             rating = None
 
+    num_votes = payload.get("num_votes")
+    if isinstance(num_votes, str):
+        digits = "".join(ch for ch in num_votes if ch.isdigit())
+        num_votes = int(digits) if digits else None
+
     title = title[:max_title_length]
     original_title = (payload.get("original_title") or title).strip()
     if original_title:
@@ -444,6 +533,7 @@ def _coerce_film_payload(payload: dict) -> dict | None:
         "original_title": original_title,
         "release_year": year,
         "rating": rating,
+        "num_votes": num_votes,
         "language": language,
         "url": url,
     }
@@ -479,6 +569,45 @@ async def _sync_people(film: Film, slugs: Iterable[str] | None, *, role: str) ->
             persons=person,
             defaults={"role": role},
         )
+
+
+async def _sync_tmdb_people(film: Film, people: Iterable[dict] | None, *, role: str) -> int:
+    if people is None:
+        return 0
+    await PersonInFilm.filter(films=film, role=role).delete()
+    saved = 0
+    for payload in people:
+        if not isinstance(payload, dict):
+            continue
+        url = (payload.get("url") or "").strip()
+        if not url:
+            continue
+        name = (payload.get("name") or "").strip() or _humanize_slug(url.rstrip("/").split("/")[-1])
+        occupation = (payload.get("occupation") or role.capitalize()).strip() or role.capitalize()
+        person, created = await Person.get_or_create(
+            url=url,
+            defaults={
+                "name": name,
+                "occupation": occupation,
+            },
+        )
+        updates: list[str] = []
+        if name and person.name != name:
+            person.name = name
+            updates.append("name")
+        if occupation and person.occupation != occupation:
+            person.occupation = occupation
+            updates.append("occupation")
+        if updates:
+            await person.save(update_fields=updates)
+        if created or updates:
+            saved += 1
+        await PersonInFilm.get_or_create(
+            films=film,
+            persons=person,
+            defaults={"role": role},
+        )
+    return saved
 
 
 async def _sync_country(film: Film, country_name: str | None) -> None:

@@ -82,3 +82,36 @@ class EnrichPeopleJobResponse(BaseModel):
     task_id: str
     limit: int
     only_missing_birth_date: bool
+
+
+class TMDBScrapeRequest(BaseModel):
+    limit: int = Field(
+        default=3000,
+        ge=1,
+        le=3000,
+        description="Maximum number of TMDB movies to import, sorted by TMDB popularity descending.",
+    )
+    language: str = Field(
+        default="en-US",
+        min_length=2,
+        max_length=10,
+        description="TMDB response language.",
+    )
+    include_adult: bool = Field(
+        default=False,
+        description="Forwarded to TMDB discover/movie include_adult.",
+    )
+    actor_limit: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=1000,
+        description="Optional cap for actors saved per movie. Leave empty to persist the full TMDB cast list.",
+    )
+
+
+class TMDBScrapeJobResponse(BaseModel):
+    task_id: str
+    limit: int
+    language: str
+    include_adult: bool
+    actor_limit: Optional[int] = None

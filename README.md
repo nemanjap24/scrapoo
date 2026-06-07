@@ -25,6 +25,10 @@ Set custom secrets via `.env` or override the compose environment variables befo
 The current CSFD ingestion and API continue to use `DATABASE_URL`. New TMDB-specific jobs can use
 `TMDB_DATABASE_URL` so imported TMDB movies and people stay isolated from the existing CSFD dataset.
 
+To enable TMDB ingestion, provide either `TMDB_API_KEY` or `TMDB_ACCESS_TOKEN` in your environment or `.env`.
+TMDB requests are throttled by default to `TMDB_REQUESTS_PER_WINDOW=40` per
+`TMDB_RATE_LIMIT_WINDOW_SECONDS=10`, and that limiter is used only for TMDB API calls.
+
 ### Triggering Scrapy crawls
 
 Once the stack is up, you can enqueue CSFD crawls directly from the API:
@@ -41,6 +45,25 @@ curl -X POST http://localhost:8000/api/v1/movies/scrape \
 			"skip_existing": false
 		}'
 ```
+
+### Triggering TMDB ingestion
+
+TMDB ingestion imports up to the top 3000 movies by TMDB popularity into the separate `scrapoo_tmdb` database.
+Each movie is fetched with appended credits so actors and directors are persisted with the film.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/movies/tmdb/scrape \
+	-H "Content-Type: application/json" \
+	-d '{
+			"limit": 3000,
+			"language": "en-US",
+			"include_adult": false
+		}'
+```
+
+Poll TMDB ingestion state via:
+
+- `GET /api/v1/movies/tmdb/scrape/{task_id}`
 
 The endpoint now resolves CSFD sitemap files from `https://static.pmgstatic.com/sitemaps/www.csfd.sk/sitemap.xml`,
 queues the selected sitemap URLs, and lets the Celery worker expand them into individual film pages. The worker

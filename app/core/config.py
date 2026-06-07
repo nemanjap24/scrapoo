@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     TMDB_DB_HOST: str = "localhost"
     TMDB_DB_PORT: int = 5433
     TMDB_API_BASE_URL: str = "https://api.themoviedb.org/3"
-    TMDB_API_KEY: str = "0c8353071a7382665bdccac775ff7258"
-    TMDB_ACCESS_TOKEN: str = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIwYzgzNTMwNzFhNzM4MjY2NWJkY2NhYzc3NWZmNzI1OCIsIm5iZiI6MTcyMTA2MzM2NC43MTI5OTk4LCJzdWIiOiI2Njk1NTdjNGNmNGVlYWI5OTFiZmY1MjUiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.A7c3LywhEBvkNQbVzcv28tOPjYbhx2SqSkRWYbovBtY"
+    TMDB_API_KEY: str | None = None
+    TMDB_ACCESS_TOKEN: str | None = None
     TMDB_REQUESTS_PER_WINDOW: int = 40
     TMDB_RATE_LIMIT_WINDOW_SECONDS: float = 10.0
     TORTOISE_MODELS: list[str] = ["app.models.entities"]

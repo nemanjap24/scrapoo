@@ -13,9 +13,11 @@ from app.schemas import (
     ScrapeJobResponse,
     ScrapeJobStatusResponse,
     ScrapeMoviesRequest,
+    TMDBScrapeJobResponse,
+    TMDBScrapeRequest,
 )
 from app.services.sitemap_loader import resolve_sitemaps, SitemapResolutionError
-from app.tasks.scraping import run_scraping_job
+from app.tasks.scraping import run_scraping_job, scrape_tmdb_top_movies
 
 router = APIRouter()
 
@@ -79,12 +81,47 @@ async def enqueue_scrape(payload: ScrapeMoviesRequest) -> ScrapeJobResponse:
     )
 
 
+@router.post(
+    "/tmdb/scrape",
+    response_model=TMDBScrapeJobResponse,
+    summary="Enqueue TMDB top-movie ingestion",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def enqueue_tmdb_scrape(payload: TMDBScrapeRequest) -> TMDBScrapeJobResponse:
+    task = scrape_tmdb_top_movies.delay(
+        payload.limit,
+        payload.language,
+        payload.include_adult,
+        payload.actor_limit,
+    )
+    return TMDBScrapeJobResponse(
+        task_id=task.id,
+        limit=payload.limit,
+        language=payload.language,
+        include_adult=payload.include_adult,
+        actor_limit=payload.actor_limit,
+    )
+
+
+@router.get(
+    "/tmdb/scrape/{task_id}",
+    response_model=ScrapeJobStatusResponse,
+    summary="Get TMDB ingestion task status",
+)
+async def get_tmdb_scrape_status(task_id: str) -> ScrapeJobStatusResponse:
+    return _task_status_response(task_id)
+
+
 @router.get(
     "/scrape/{task_id}",
     response_model=ScrapeJobStatusResponse,
     summary="Get scrape task status",
 )
 async def get_scrape_status(task_id: str) -> ScrapeJobStatusResponse:
+    return _task_status_response(task_id)
+
+
+def _task_status_response(task_id: str) -> ScrapeJobStatusResponse:
     task_result = AsyncResult(task_id, app=celery_app)
     state = task_result.state
     ready = task_result.ready()

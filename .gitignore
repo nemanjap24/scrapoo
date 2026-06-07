@@ -15,4 +15,5 @@ archive/*
 celerybeat-schedule
 movie-example.txt
 person-example.txt
+celerybeat-schedule
 

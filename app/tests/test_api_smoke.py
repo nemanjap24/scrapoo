@@ -53,6 +53,15 @@ class TestApiSmoke(unittest.TestCase):
             self.assertFalse(payload.get("ready"))
             self.assertFalse(payload.get("successful"))
 
+    def test_tmdb_scrape_status_pending_for_unknown_task(self) -> None:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/movies/tmdb/scrape/00000000-0000-0000-0000-000000000000")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload.get("state"), "PENDING")
+            self.assertFalse(payload.get("ready"))
+            self.assertFalse(payload.get("successful"))
+
 
 if __name__ == "__main__":
     unittest.main()
