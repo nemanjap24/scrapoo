@@ -65,6 +65,11 @@ Poll TMDB ingestion state via:
 
 - `GET /api/v1/movies/tmdb/scrape/{task_id}`
 
+The completed task result includes `movies_failed` and `failed_movies`. When TMDB cannot fetch an individual
+movie detail page, ingestion continues and the failed TMDB id, title, URL, and error are reported there. CSFD scrape
+results similarly include `failed_seed_count` and `failed_seed_urls` for chunks whose input URLs did not produce a
+movie payload.
+
 The endpoint now resolves CSFD sitemap files from `https://static.pmgstatic.com/sitemaps/www.csfd.sk/sitemap.xml`,
 queues the selected sitemap URLs, and lets the Celery worker expand them into individual film pages. The worker
 then crawls each film via Scrapy and persists the results in PostgreSQL. Film pages still capture linked person
