@@ -145,16 +145,17 @@ def _render_community_graph(communities: Dict[str, Any]) -> None:
         ]
         title_parts = [
             f"Community {community_id}",
-            f"Actors: {node['actor_count']}",
-            f"Internal collaborations: {node['internal_edge_count']}",
-            f"Internal weight: {node['internal_weight']}",
+            f"Actors: {int(node['actor_count']):,}",
+            f"Internal collaborations: {int(node['internal_edge_count']):,}",
+            f"Internal weight: {int(node['internal_weight']):,}",
         ]
         if top_names:
-            title_parts.append(f"Top actors: {', '.join(top_names)}")
+            actor_list = "\n".join(f"  - {name}" for name in top_names)
+            title_parts.append(f"Top actors:\n{actor_list}")
         net.add_node(
             community_id,
             label=f"C{community_id}",
-            title="<br>".join(title_parts),
+            title="\n".join(title_parts),
             value=max(int(node["actor_count"]), 1),
             group=community_id,
         )
