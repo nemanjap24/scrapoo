@@ -15,11 +15,15 @@ docker compose up --build
 
 - API: http://localhost:8000 (FastAPI docs at `/docs`).
 - PostgreSQL: exposed on port 5432 (default credentials in `docker-compose.yml`).
+- TMDB PostgreSQL: exposed on port 5433, backed by a separate `scrapoo_tmdb` database for future TMDB ingestion.
 - Redis: exposed on port 6379 for Celery broker/result backend.
 - Dashboard: http://localhost:8501 (Streamlit UI powered by the analytics endpoints).
 - Celery beat: schedules periodic crawl tasks according to `SCRAPE_SCHEDULE_*` env vars.
 
 Set custom secrets via `.env` or override the compose environment variables before running.
+
+The current CSFD ingestion and API continue to use `DATABASE_URL`. New TMDB-specific jobs can use
+`TMDB_DATABASE_URL` so imported TMDB movies and people stay isolated from the existing CSFD dataset.
 
 ### Triggering Scrapy crawls
 

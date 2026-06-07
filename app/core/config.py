@@ -15,6 +15,18 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = "scrapoo"
     DB_HOST: str = "localhost"
     DB_PORT: int = 5432
+
+    TMDB_DATABASE_URL: str | None = None
+    TMDB_DB_NAME: str = "scrapoo_tmdb"
+    TMDB_DB_USER: str = "scrapoo"
+    TMDB_DB_PASSWORD: str = "scrapoo"
+    TMDB_DB_HOST: str = "localhost"
+    TMDB_DB_PORT: int = 5433
+    TMDB_API_BASE_URL: str = "https://api.themoviedb.org/3"
+    TMDB_API_KEY: str = "0c8353071a7382665bdccac775ff7258"
+    TMDB_ACCESS_TOKEN: str = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIwYzgzNTMwNzFhNzM4MjY2NWJkY2NhYzc3NWZmNzI1OCIsIm5iZiI6MTcyMTA2MzM2NC43MTI5OTk4LCJzdWIiOiI2Njk1NTdjNGNmNGVlYWI5OTFiZmY1MjUiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.A7c3LywhEBvkNQbVzcv28tOPjYbhx2SqSkRWYbovBtY"
+    TMDB_REQUESTS_PER_WINDOW: int = 40
+    TMDB_RATE_LIMIT_WINDOW_SECONDS: float = 10.0
     TORTOISE_MODELS: list[str] = ["app.models.entities"]
 
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
@@ -63,6 +75,12 @@ class Settings(BaseSettings):
         if not self.DATABASE_URL:
             self.DATABASE_URL = (
                 f"postgres://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+            )
+        if not self.TMDB_DATABASE_URL:
+            self.TMDB_DATABASE_URL = (
+                "postgres://"
+                f"{self.TMDB_DB_USER}:{self.TMDB_DB_PASSWORD}"
+                f"@{self.TMDB_DB_HOST}:{self.TMDB_DB_PORT}/{self.TMDB_DB_NAME}"
             )
         return self
 
