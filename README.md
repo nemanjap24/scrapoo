@@ -1,11 +1,13 @@
 # sitemap_collector
 
+[![FastAPI Stack Tests](https://github.com/nemanjap24/scrapoo/actions/workflows/fastapi-tests.yml/badge.svg)](https://github.com/nemanjap24/scrapoo/actions/workflows/fastapi-tests.yml)
+
 Standalone script/module to collect URLs from robots.txt -> sitemaps -> nested sitemaps.
 
 ## FastAPI + Scrapy stack (WIP)
 
 The project is migrating to a FastAPI + Scrapy + Celery architecture. To run the local stack
-with Docker Compose (API, Celery worker, PostgreSQL, Redis, Streamlit dashboard):
+with Docker Compose (API, Celery worker, Celery beat scheduler, PostgreSQL, Redis, Streamlit dashboard):
 
 ```bash
 docker compose up --build
@@ -13,10 +15,19 @@ docker compose up --build
 
 - API: http://localhost:8000 (FastAPI docs at `/docs`).
 - PostgreSQL: exposed on port 5432 (default credentials in `docker-compose.yml`).
+- TMDB PostgreSQL: exposed on port 5433, backed by a separate `scrapoo_tmdb` database for future TMDB ingestion.
 - Redis: exposed on port 6379 for Celery broker/result backend.
 - Dashboard: http://localhost:8501 (Streamlit UI powered by the analytics endpoints).
+- Celery beat: schedules periodic crawl tasks according to `SCRAPE_SCHEDULE_*` env vars.
 
 Set custom secrets via `.env` or override the compose environment variables before running.
+
+The current CSFD ingestion and API continue to use `DATABASE_URL`. New TMDB-specific jobs can use
+`TMDB_DATABASE_URL` so imported TMDB movies and people stay isolated from the existing CSFD dataset.
+
+To enable TMDB ingestion, provide either `TMDB_API_KEY` or `TMDB_ACCESS_TOKEN` in your environment or `.env`.
+TMDB requests are throttled by default to `TMDB_REQUESTS_PER_WINDOW=40` per
+`TMDB_RATE_LIMIT_WINDOW_SECONDS=10`, and that limiter is used only for TMDB API calls.
 
 ### Triggering Scrapy crawls
 
@@ -29,14 +40,35 @@ curl -X POST http://localhost:8000/api/v1/movies/scrape \
 			"from_page": 1,
 			"max_pages": 1,
 			"max_films": 1000,
-			"include_people": true,
-			"include_movies": true
+			"include_people": false,
+			"include_movies": true,
+			"skip_existing": false
 		}'
 ```
 
+### Triggering TMDB ingestion
+
+TMDB ingestion imports up to the top 3000 movies by TMDB popularity into the separate `scrapoo_tmdb` database.
+Each movie is fetched with appended credits so actors and directors are persisted with the film.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/movies/tmdb/scrape \
+	-H "Content-Type: application/json" \
+	-d '{
+			"limit": 3000,
+			"language": "en-US",
+			"include_adult": false
+		}'
+```
+
+Poll TMDB ingestion state via:
+
+- `GET /api/v1/movies/tmdb/scrape/{task_id}`
+
 The endpoint now resolves CSFD sitemap files from `https://static.pmgstatic.com/sitemaps/www.csfd.sk/sitemap.xml`,
 queues the selected sitemap URLs, and lets the Celery worker expand them into individual film pages. The worker
-then crawls each film via Scrapy and persists the results in PostgreSQL (optionally capturing linked people).
+then crawls each film via Scrapy and persists the results in PostgreSQL. Film pages still capture linked person
+stubs for actors/directors, while full person detail crawling is handled by a separate enrichment job.
 
 Available POST body options:
 
@@ -44,10 +76,58 @@ Available POST body options:
 - `max_pages` _(int, optional)_ – number of sitemap files to process after `from_page`. Hard capped at 250.
 - `max_films` _(int, optional)_ – stops the crawl once this many film detail pages have been visited, even if there
   are still sitemaps left in the window.
-- `include_people` _(bool, default true)_ – when true, every discovered actor/director also gets a dedicated person
-  crawl; when false only the inline person stubs from film pages are emitted.
+- `include_people` _(bool, default false)_ – keep false for fast film collection. When true, every discovered
+  actor/director also gets a dedicated person crawl during the film scrape.
 - `include_movies` _(bool, default true)_ – future-proof flag for creator-only runs. Leave true unless you
   deliberately want to ignore film URLs.
+- `skip_existing` _(bool, default false)_ – when true, the worker filters out film URLs that already exist in
+  `film.url` before crawling. Useful for repeated sitemap runs.
+
+After enqueueing a scrape, poll task state via:
+
+- `GET /api/v1/movies/scrape/{task_id}`
+  - Returns Celery state (`PENDING`, `STARTED`, `SUCCESS`, `FAILURE`), completion flags, and task result/error payload.
+  - Successful scrape results include timing fields such as `duration_seconds`, `films_per_second`, and per-chunk
+    `duration_seconds`/`films_per_second` values.
+
+### Periodic scheduling (Gate 7)
+
+- Periodic crawl orchestration is handled by Celery beat via task `tasks.scraping.schedule_default_crawl`.
+- Scheduler interval and crawl scope are controlled via environment variables:
+  - `SCRAPE_SCHEDULE_MINUTES` (set `0` to disable scheduling)
+  - `SCRAPE_SCHEDULE_FROM_PAGE`
+  - `SCRAPE_SCHEDULE_MAX_PAGES`
+  - `SCRAPE_SCHEDULE_MAX_FILMS`
+  - `SCRAPE_SCHEDULE_INCLUDE_PEOPLE`
+  - `SCRAPE_SCHEDULE_INCLUDE_MOVIES`
+  - `SCRAPE_PARALLEL_CHUNKS` (default `4`; number of scrape chunks dispatched in parallel waves)
+- Monitor scheduler activity with:
+
+```bash
+docker compose logs --tail=200 beat
+docker compose logs --tail=200 worker
+```
+
+#### Slow person enrichment
+
+After a fast film scrape has created person stubs, enqueue person detail enrichment separately:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/people/enrich \
+	-H "Content-Type: application/json" \
+	-d '{
+			"limit": 500,
+			"only_missing_birth_date": true
+		}'
+```
+
+Poll enrichment state via:
+
+- `GET /api/v1/people/enrich/{task_id}`
+
+The enrichment task selects existing people from PostgreSQL, crawls their CSFD detail pages, and updates fields that
+the current schema can store, such as `birth_date`. Successful enrichment results include `duration_seconds`,
+`people_per_second`, and per-chunk timing values.
 
 #### Worker internals (important when toggling `include_people`)
 
@@ -58,9 +138,57 @@ Available POST body options:
   surfaces its stdout/stderr for quick diagnosis.
 - Films always emit creator/person stubs inline, regardless of the `include_people` flag. Those stubs give us
   director/actor slugs, names, and URLs directly from the film page so we can persist relationships quickly.
-- Setting `include_people=true` additionally queues each encountered person for a dedicated detail-page crawl.
-  When `include_people=false`, no extra person requests are scheduled—only the inline stubs from the film remain,
-  which is sufficient for speeding up ingestion when full biographies are not needed.
+- Setting `include_people=true` additionally queues each encountered person for a dedicated detail-page crawl during
+  the film scrape. Prefer the separate `/people/enrich` endpoint when you want fast film ingestion first and slower
+  person details later.
+- Crawls stream seeds in configurable batches so long-running jobs stay predictable. Adjust `SCRAPE_CHUNK_SIZE`
+  (default 200) to control how many film URLs each helper process tackles before persistence runs.
+- Scrape chunks are dispatched to Celery in parallel waves controlled by `SCRAPE_PARALLEL_CHUNKS` (default 4).
+  The compose default worker concurrency is 5 so the parent scrape task can wait while 4 child chunk tasks run.
+
+### Core data endpoints (current response shape)
+
+- `GET /api/v1/movies?limit=1`
+  - Returns film records aligned with the Tortoise `Film` model.
+  - Genres are represented as a many-to-many list in `genres`.
+  - There is no singular `genre`/`genre_id` field in this API shape.
+
+Example response item:
+
+```json
+{
+  "id": 57,
+  "title": "Hana a jej sestry",
+  "original_title": "Hannah and Her Sisters",
+  "country_id": 6,
+  "language": "Unknown",
+  "release_year": 1986,
+  "rating": null,
+  "num_votes": null,
+  "url": "https://www.csfd.sk/film/38-hana-a-jej-sestry/prehlad/",
+  "country": { "id": 6, "name": "USA" },
+  "genres": [],
+  "directors": [],
+  "actors": []
+}
+```
+
+- `GET /api/v1/people?limit=1`
+  - Returns people with computed `film_count` and linked `films` entries.
+
+Example response item:
+
+```json
+{
+  "id": 3571,
+  "name": "Soon Yi Previn",
+  "occupation": "Actor",
+  "url": "https://www.csfd.sk/tvorca/587986-soon-yi-previn/",
+  "birth_date": null,
+  "film_count": 0,
+  "films": []
+}
+```
 
 ### Analytics overview endpoint
 
@@ -90,6 +218,21 @@ Available POST body options:
   if needed (default `http://localhost:8000/api/v1`), then run `streamlit run dashboard/streamlit_app.py`.
 - The UI surfaces the same analytics (overview, roles, countries, releases, collaboration graph) with Plotly charts
   plus an interactive PyVis-powered network visualization of the strongest collaborations.
+
+### Testing (FastAPI stack only)
+
+To run a clean test flow that excludes legacy Django tests, execute inside the API container:
+
+```bash
+docker compose exec -T api sh scripts/test_fastapi_stack.sh
+```
+
+This runs:
+
+- `app.tests.test_api_smoke` (FastAPI endpoint smoke tests)
+- `scraper.test_sitemap_collector` (sitemap collector tests)
+
+It intentionally does not run `scraper/tests.py` (legacy Django test module).
 
 ## Legacy sitemap collector module
 

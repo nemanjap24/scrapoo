@@ -25,13 +25,13 @@ class Genre(models.Model):
 
 class Film(models.Model):
     id = fields.IntField(pk=True)
-    title = fields.CharField(max_length=50)
-    original_title = fields.CharField(max_length=50, null=True)
+    title = fields.CharField(max_length=150)
+    original_title = fields.CharField(max_length=150, null=True)
     language = fields.CharField(max_length=50, null=True)
     release_year = fields.IntField(null=True)
     rating = fields.FloatField(null=True)
     num_votes = fields.IntField(null=True)
-    url = fields.CharField(max_length=100, null=True)
+    url = fields.CharField(max_length=255, null=True)
 
     country: fields.ForeignKeyRelation[Country] = fields.ForeignKeyField(
         "models.Country",
@@ -56,7 +56,7 @@ class Person(models.Model):
     id = fields.IntField(pk=True)
     name = fields.CharField(max_length=60)
     birth_date = fields.DateField(null=True)
-    url = fields.CharField(max_length=100, null=True)
+    url = fields.CharField(max_length=255, null=True)
     occupation = fields.CharField(max_length=50, null=True)
 
     person_in_films: fields.ReverseRelation["PersonInFilm"]
@@ -85,7 +85,7 @@ class PersonInFilm(models.Model):
 
 class MovieLink(models.Model):
     id = fields.IntField(pk=True)
-    url = fields.CharField(max_length=100, null=True)
+    url = fields.CharField(max_length=255, null=True)
     status = fields.CharField(max_length=15, null=True)
 
     class Meta:

@@ -15,6 +15,18 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = "scrapoo"
     DB_HOST: str = "localhost"
     DB_PORT: int = 5432
+
+    TMDB_DATABASE_URL: str | None = None
+    TMDB_DB_NAME: str = "scrapoo_tmdb"
+    TMDB_DB_USER: str = "scrapoo"
+    TMDB_DB_PASSWORD: str = "scrapoo"
+    TMDB_DB_HOST: str = "localhost"
+    TMDB_DB_PORT: int = 5433
+    TMDB_API_BASE_URL: str = "https://api.themoviedb.org/3"
+    TMDB_API_KEY: str | None = None
+    TMDB_ACCESS_TOKEN: str | None = None
+    TMDB_REQUESTS_PER_WINDOW: int = 40
+    TMDB_RATE_LIMIT_WINDOW_SECONDS: float = 10.0
     TORTOISE_MODELS: list[str] = ["app.models.entities"]
 
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
@@ -30,6 +42,14 @@ class Settings(BaseSettings):
     SITEMAP_INDEX_URL: HttpUrl = "https://static.pmgstatic.com/sitemaps/www.csfd.sk/sitemap.xml"
     REQUEST_DELAY: float = 0.0
     SCRAPY_CONCURRENT_REQUESTS: int = 32
+    SCRAPE_CHUNK_SIZE: int = 200
+    SCRAPE_PARALLEL_CHUNKS: int = 4
+    SCRAPE_SCHEDULE_MINUTES: int = 0
+    SCRAPE_SCHEDULE_FROM_PAGE: int = 1
+    SCRAPE_SCHEDULE_MAX_PAGES: int = 1
+    SCRAPE_SCHEDULE_MAX_FILMS: int = 1
+    SCRAPE_SCHEDULE_INCLUDE_PEOPLE: bool = False
+    SCRAPE_SCHEDULE_INCLUDE_MOVIES: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -56,7 +76,81 @@ class Settings(BaseSettings):
             self.DATABASE_URL = (
                 f"postgres://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
             )
+        if not self.TMDB_DATABASE_URL:
+            self.TMDB_DATABASE_URL = (
+                "postgres://"
+                f"{self.TMDB_DB_USER}:{self.TMDB_DB_PASSWORD}"
+                f"@{self.TMDB_DB_HOST}:{self.TMDB_DB_PORT}/{self.TMDB_DB_NAME}"
+            )
         return self
+
+    @field_validator("SCRAPE_CHUNK_SIZE", mode="before")
+    @classmethod
+    def _sanitize_chunk_size(cls, value: int | str | None) -> int:
+        default = cls.model_fields["SCRAPE_CHUNK_SIZE"].default
+        if value is None:
+            return default
+        if isinstance(value, int):
+            return max(1, value)
+        cleaned = value.split("#", 1)[0].strip()
+        if not cleaned:
+            return default
+        try:
+            parsed = int(float(cleaned))
+        except ValueError:
+            return default
+        return max(1, parsed)
+
+    @field_validator("SCRAPE_PARALLEL_CHUNKS", mode="before")
+    @classmethod
+    def _sanitize_parallel_chunks(cls, value: int | str | None) -> int:
+        default = cls.model_fields["SCRAPE_PARALLEL_CHUNKS"].default
+        if value is None:
+            return default
+        if isinstance(value, int):
+            return max(1, value)
+        cleaned = value.split("#", 1)[0].strip()
+        if not cleaned:
+            return default
+        try:
+            parsed = int(float(cleaned))
+        except ValueError:
+            return default
+        return max(1, parsed)
+
+    @field_validator("SCRAPE_SCHEDULE_MINUTES", mode="before")
+    @classmethod
+    def _sanitize_schedule_minutes(cls, value: int | str | None) -> int:
+        default = cls.model_fields["SCRAPE_SCHEDULE_MINUTES"].default
+        if value is None:
+            return default
+        if isinstance(value, int):
+            return max(0, value)
+        cleaned = value.split("#", 1)[0].strip()
+        if not cleaned:
+            return default
+        try:
+            parsed = int(float(cleaned))
+        except ValueError:
+            return default
+        return max(0, parsed)
+
+    @field_validator("SCRAPE_SCHEDULE_FROM_PAGE", "SCRAPE_SCHEDULE_MAX_PAGES", "SCRAPE_SCHEDULE_MAX_FILMS", mode="before")
+    @classmethod
+    def _sanitize_schedule_positive(cls, value: int | str | None, info) -> int:
+        default = cls.model_fields[info.field_name].default
+        if value is None:
+            return default
+        if isinstance(value, int):
+            return max(1, value)
+        cleaned = value.split("#", 1)[0].strip()
+        if not cleaned:
+            return default
+        try:
+            parsed = int(float(cleaned))
+        except ValueError:
+            return default
+        return max(1, parsed)
 
 
 settings = Settings()

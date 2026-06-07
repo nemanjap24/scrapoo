@@ -1,0 +1,77 @@
+@startuml
+' Current DB schema snapshot (generated from running Docker Postgres on 2026-04-14)
+hide methods
+hide stereotypes
+skinparam classAttributeIconSize 0
+
+entity "country" as country {
+  * id : integer <<PK>>
+  --
+  name : varchar(50) NULL
+}
+
+entity "film" as film {
+  * id : integer <<PK>>
+  --
+  title : varchar(150)
+  original_title : varchar(150) NULL
+  language : varchar(50) NULL
+  release_year : integer NULL
+  rating : double precision NULL
+  num_votes : integer NULL
+  url : varchar(255) NULL
+  country_id : integer NULL <<FK>>
+}
+
+entity "genre" as genre {
+  * id : integer <<PK>>
+  --
+  name : varchar(60) NULL
+}
+
+entity "film_genre" as film_genre {
+  * film_id : integer <<FK>>
+  * genre_id : integer <<FK>>
+}
+
+entity "person" as person {
+  * id : integer <<PK>>
+  --
+  name : varchar(60)
+  birth_date : date NULL
+  url : varchar(255) NULL
+  occupation : varchar(50) NULL
+}
+
+entity "person_in_film" as person_in_film {
+  * id : integer <<PK>>
+  --
+  role : varchar(30) NULL
+  films_id : integer <<FK>>
+  persons_id : integer <<FK>>
+  ..
+  UNIQUE (films_id, persons_id)
+}
+
+entity "movie_link" as movie_link {
+  * id : integer <<PK>>
+  --
+  url : varchar(255) NULL
+  status : varchar(15) NULL
+}
+
+country ||--o{ film : "film.country_id -> country.id"
+film ||--o{ film_genre : "film_genre.film_id"
+genre ||--o{ film_genre : "film_genre.genre_id"
+film ||--o{ person_in_film : "person_in_film.films_id"
+person ||--o{ person_in_film : "person_in_film.persons_id"
+
+note right of film
+  ON DELETE SET NULL for country_id
+end note
+
+note right of person_in_film
+  ON DELETE CASCADE on both FKs
+end note
+
+@enduml

@@ -1,12 +1,23 @@
 from typing import List
 
+from celery.result import AsyncResult
 from fastapi import APIRouter, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 
+from app.core.celery_app import celery_app
 from app.models import Film
-from app.schemas import FilmCreate, FilmRead, PersonSummary, ScrapeJobResponse, ScrapeMoviesRequest
+from app.schemas import (
+    FilmCreate,
+    FilmRead,
+    PersonSummary,
+    ScrapeJobResponse,
+    ScrapeJobStatusResponse,
+    ScrapeMoviesRequest,
+    TMDBScrapeJobResponse,
+    TMDBScrapeRequest,
+)
 from app.services.sitemap_loader import resolve_sitemaps, SitemapResolutionError
-from app.tasks.scraping import run_scraping_job
+from app.tasks.scraping import run_scraping_job, scrape_tmdb_top_movies
 
 router = APIRouter()
 
@@ -17,7 +28,7 @@ async def list_films(limit: int = 50) -> List[FilmRead]:
         await Film.all()
         .order_by("-id")
         .limit(limit)
-        .prefetch_related("country", "genre", "genres", "person_links__person")
+        .prefetch_related("country", "genres", "person_in_films__persons")
     )
     return [_serialize_film(film) for film in films]
 
@@ -30,7 +41,7 @@ async def create_film(payload: FilmCreate) -> FilmRead:
             raise HTTPException(status_code=409, detail="Film already exists")
 
     film = await Film.create(**payload.model_dump())
-    await film.fetch_related("country", "genre", "genres", "person_links__person")
+    await film.fetch_related("country", "genres", "person_in_films__persons")
     return _serialize_film(film)
 
 
@@ -54,6 +65,7 @@ async def enqueue_scrape(payload: ScrapeMoviesRequest) -> ScrapeJobResponse:
         payload.include_people,
         payload.include_movies,
         payload.max_films,
+        payload.skip_existing,
     )
 
     return ScrapeJobResponse(
@@ -63,18 +75,76 @@ async def enqueue_scrape(payload: ScrapeMoviesRequest) -> ScrapeJobResponse:
         max_films=payload.max_films,
         include_people=payload.include_people,
         include_movies=payload.include_movies,
+        skip_existing=payload.skip_existing,
         sitemaps=sitemap_urls,
         queued=len(sitemap_urls),
     )
 
 
+@router.post(
+    "/tmdb/scrape",
+    response_model=TMDBScrapeJobResponse,
+    summary="Enqueue TMDB top-movie ingestion",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def enqueue_tmdb_scrape(payload: TMDBScrapeRequest) -> TMDBScrapeJobResponse:
+    task = scrape_tmdb_top_movies.delay(
+        payload.limit,
+        payload.language,
+        payload.include_adult,
+        payload.actor_limit,
+    )
+    return TMDBScrapeJobResponse(
+        task_id=task.id,
+        limit=payload.limit,
+        language=payload.language,
+        include_adult=payload.include_adult,
+        actor_limit=payload.actor_limit,
+    )
+
+
+@router.get(
+    "/tmdb/scrape/{task_id}",
+    response_model=ScrapeJobStatusResponse,
+    summary="Get TMDB ingestion task status",
+)
+async def get_tmdb_scrape_status(task_id: str) -> ScrapeJobStatusResponse:
+    return _task_status_response(task_id)
+
+
+@router.get(
+    "/scrape/{task_id}",
+    response_model=ScrapeJobStatusResponse,
+    summary="Get scrape task status",
+)
+async def get_scrape_status(task_id: str) -> ScrapeJobStatusResponse:
+    return _task_status_response(task_id)
+
+
+def _task_status_response(task_id: str) -> ScrapeJobStatusResponse:
+    task_result = AsyncResult(task_id, app=celery_app)
+    state = task_result.state
+    ready = task_result.ready()
+    successful = task_result.successful()
+    result_payload = task_result.result if successful and isinstance(task_result.result, dict) else None
+    error_payload = str(task_result.result) if ready and not successful and task_result.result is not None else None
+    return ScrapeJobStatusResponse(
+        task_id=task_id,
+        state=state,
+        ready=ready,
+        successful=successful,
+        result=result_payload,
+        error=error_payload,
+    )
+
+
 def _serialize_film(film: Film) -> FilmRead:
-    links_attr = getattr(film, "person_links", None)
+    links_attr = getattr(film, "person_in_films", None)
     person_links = links_attr if isinstance(links_attr, list) else []
     directors: List[PersonSummary] = []
     actors: List[PersonSummary] = []
     for link in person_links:
-        person = getattr(link, "person", None)
+        person = getattr(link, "persons", None)
         if not person:
             continue
         summary = PersonSummary.model_validate(person)
@@ -95,10 +165,8 @@ def _serialize_film(film: Film) -> FilmRead:
         release_year=film.release_year,
         rating=film.rating,
         num_votes=film.num_votes,
-        genre_id=film.genre_id,
         url=film.url,
         country=getattr(film, "country", None),
-        genre=getattr(film, "genre", None),
         genres=genre_objs,
         directors=directors,
         actors=actors,

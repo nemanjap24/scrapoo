@@ -66,6 +66,9 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
 
     def parse(self, response: scrapy.http.Response):  # type: ignore[override]
         url = response.url
+        if "/tvorca/" in url or "/tvurce/" in url:
+            yield from self.parse_person(response)
+            return
         if "/film/" in url:
             yield from self.parse_film(response)
             return
@@ -154,13 +157,13 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
         if self.include_people:
             for slug in directors:
                 yield response.follow(
-                    url=response.urljoin(f"/tvorca/{slug}/"),
+                    url=response.urljoin(f"/tvorca/{slug}/prehlad/"),
                     callback=self.parse_person,
                     cb_kwargs={"fallback_slug": slug, "role": "director"},
                 )
             for slug in actors:
                 yield response.follow(
-                    url=response.urljoin(f"/tvorca/{slug}/"),
+                    url=response.urljoin(f"/tvorca/{slug}/prehlad/"),
                     callback=self.parse_person,
                     cb_kwargs={"fallback_slug": slug, "role": "actor"},
                 )
@@ -209,7 +212,8 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
         for token in ("/tvorca/", "/tvurce/"):
             if token in url:
                 slug = url.split(token, 1)[-1]
-                return slug.strip("/")
+                slug = slug.strip("/")
+                return slug.split("/", 1)[0] if slug else None
         return None
 
     def _extract_original_title(
@@ -345,6 +349,19 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
         return f"{base_url}/tvorca/{slug}/"
 
     @staticmethod
+    def build_person_overview_url(url: str) -> str:
+        cleaned = (url or "").strip()
+        if not cleaned:
+            return cleaned
+        for token in ("#", "?"):
+            if token in cleaned:
+                cleaned = cleaned.split(token, 1)[0]
+        cleaned = cleaned.rstrip("/")
+        if cleaned.endswith("/prehlad"):
+            return f"{cleaned}/"
+        return f"{cleaned}/prehlad/"
+
+    @staticmethod
     def _extract_person_slug_from_href(href: str) -> Optional[str]:
         """Return the slug portion from typical \n+        /tvorca/<slug>/prehlad/ style URLs."""
 
@@ -383,7 +400,7 @@ def crawl_movies(
     start_urls: Iterable[str],
     *,
     max_listing_pages: int = 1,
-    include_people: bool = True,
+    include_people: bool = False,
     request_delay: Optional[float] = None,
 ) -> ScrapeBatch:
     """Run the CSFD spider and return collected payloads.
@@ -414,6 +431,21 @@ def crawl_movies(
     except json.JSONDecodeError as exc:  # pragma: no cover - defensive
         raise RuntimeError(f"Failed to parse scraper output: {exc}\nRaw: {completed.stdout}") from exc
     return ScrapeBatch(movies=parsed.get("movies", []), people=parsed.get("people", []))
+
+
+def crawl_people(
+    start_urls: Iterable[str],
+    *,
+    request_delay: Optional[float] = None,
+) -> ScrapeBatch:
+    """Crawl person detail pages and return collected person payloads."""
+
+    return crawl_movies(
+        start_urls,
+        max_listing_pages=0,
+        include_people=False,
+        request_delay=request_delay,
+    )
 
 
 def _build_spider_settings(download_delay: float) -> Dict:

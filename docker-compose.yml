@@ -9,6 +9,11 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       DATABASE_URL: postgres://scrapoo:scrapoo@postgres:5432/scrapoo
+      TMDB_DATABASE_URL: postgres://scrapoo:scrapoo@tmdb-postgres:5432/scrapoo_tmdb
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN:-}
+      TMDB_REQUESTS_PER_WINDOW: ${TMDB_REQUESTS_PER_WINDOW:-40}
+      TMDB_RATE_LIMIT_WINDOW_SECONDS: ${TMDB_RATE_LIMIT_WINDOW_SECONDS:-10}
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       SCRAPY_SETTINGS_MODULE: crawler.settings
@@ -18,22 +23,68 @@ services:
       - "8000:8000"
     depends_on:
       - postgres
+      - tmdb-postgres
       - redis
 
   worker:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
+    command: celery -A app.core.celery_app.celery_app worker --loglevel=info --concurrency=${CELERY_WORKER_CONCURRENCY:-5}
     container_name: scrapoo-worker
     environment:
       DATABASE_URL: postgres://scrapoo:scrapoo@postgres:5432/scrapoo
+      TMDB_DATABASE_URL: postgres://scrapoo:scrapoo@tmdb-postgres:5432/scrapoo_tmdb
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN:-}
+      TMDB_REQUESTS_PER_WINDOW: ${TMDB_REQUESTS_PER_WINDOW:-40}
+      TMDB_RATE_LIMIT_WINDOW_SECONDS: ${TMDB_RATE_LIMIT_WINDOW_SECONDS:-10}
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       SCRAPY_SETTINGS_MODULE: crawler.settings
+      SCRAPE_CHUNK_SIZE: ${SCRAPE_CHUNK_SIZE:-200}
+      SCRAPE_SCHEDULE_FROM_PAGE: ${SCRAPE_SCHEDULE_FROM_PAGE:-1}
+      SCRAPE_SCHEDULE_MAX_PAGES: ${SCRAPE_SCHEDULE_MAX_PAGES:-1}
+      SCRAPE_SCHEDULE_MAX_FILMS: ${SCRAPE_SCHEDULE_MAX_FILMS:-1}
+      SCRAPE_SCHEDULE_INCLUDE_PEOPLE: ${SCRAPE_SCHEDULE_INCLUDE_PEOPLE:-false}
+      SCRAPE_SCHEDULE_INCLUDE_MOVIES: ${SCRAPE_SCHEDULE_INCLUDE_MOVIES:-true}
+      SCRAPE_PARALLEL_CHUNKS: ${SCRAPE_PARALLEL_CHUNKS:-4}
     volumes:
       - ./:/app
     depends_on:
       - postgres
+      - tmdb-postgres
+      - redis
+
+  beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: scrapoo-beat
+    command: celery -A app.core.celery_app.celery_app beat --loglevel=info
+    environment:
+      DATABASE_URL: postgres://scrapoo:scrapoo@postgres:5432/scrapoo
+      TMDB_DATABASE_URL: postgres://scrapoo:scrapoo@tmdb-postgres:5432/scrapoo_tmdb
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN:-}
+      TMDB_REQUESTS_PER_WINDOW: ${TMDB_REQUESTS_PER_WINDOW:-40}
+      TMDB_RATE_LIMIT_WINDOW_SECONDS: ${TMDB_RATE_LIMIT_WINDOW_SECONDS:-10}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      SCRAPY_SETTINGS_MODULE: crawler.settings
+      SCRAPE_CHUNK_SIZE: ${SCRAPE_CHUNK_SIZE:-200}
+      SCRAPE_SCHEDULE_MINUTES: ${SCRAPE_SCHEDULE_MINUTES:-1}
+      SCRAPE_SCHEDULE_FROM_PAGE: ${SCRAPE_SCHEDULE_FROM_PAGE:-1}
+      SCRAPE_SCHEDULE_MAX_PAGES: ${SCRAPE_SCHEDULE_MAX_PAGES:-1}
+      SCRAPE_SCHEDULE_MAX_FILMS: ${SCRAPE_SCHEDULE_MAX_FILMS:-1}
+      SCRAPE_SCHEDULE_INCLUDE_PEOPLE: ${SCRAPE_SCHEDULE_INCLUDE_PEOPLE:-false}
+      SCRAPE_SCHEDULE_INCLUDE_MOVIES: ${SCRAPE_SCHEDULE_INCLUDE_MOVIES:-true}
+      SCRAPE_PARALLEL_CHUNKS: ${SCRAPE_PARALLEL_CHUNKS:-4}
+    volumes:
+      - ./:/app
+    depends_on:
+      - postgres
+      - tmdb-postgres
       - redis
 
   postgres:
@@ -47,6 +98,18 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+
+  tmdb-postgres:
+    image: postgres:15-alpine
+    container_name: scrapoo-tmdb-postgres
+    environment:
+      POSTGRES_USER: scrapoo
+      POSTGRES_PASSWORD: scrapoo
+      POSTGRES_DB: scrapoo_tmdb
+    ports:
+      - "5433:5432"
+    volumes:
+      - tmdb-postgres-data:/var/lib/postgresql/data
 
   redis:
     image: redis:7-alpine
@@ -71,3 +134,4 @@ services:
 
 volumes:
   postgres-data:
+  tmdb-postgres-data:
