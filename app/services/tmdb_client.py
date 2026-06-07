@@ -27,6 +27,7 @@ class TMDBRequestError(RuntimeError):
 @dataclass(slots=True)
 class TMDBIngestionBatch:
     movies: list[dict]
+    failed_movies: list[dict]
     pages_requested: int
     movie_details_requested: int
     requests_made: int
@@ -90,6 +91,7 @@ class TMDBClient:
     ) -> TMDBIngestionBatch:
         target = max(1, int(limit))
         movies: list[dict] = []
+        failed_movies: list[dict] = []
         pages_requested = 0
         movie_details_requested = 0
 
@@ -118,16 +120,27 @@ class TMDBClient:
                     tmdb_id = movie.get("id")
                     if not tmdb_id:
                         continue
-                    details = self._get(
-                        client,
-                        f"/movie/{tmdb_id}",
-                        params={
-                            "append_to_response": "credits",
-                            "language": language,
-                        },
-                    )
-                    movie_details_requested += 1
-                    movies.append(_map_movie(details, actor_limit=actor_limit))
+                    try:
+                        details = self._get(
+                            client,
+                            f"/movie/{tmdb_id}",
+                            params={
+                                "append_to_response": "credits",
+                                "language": language,
+                            },
+                        )
+                        movie_details_requested += 1
+                        movies.append(_map_movie(details, actor_limit=actor_limit))
+                    except TMDBRequestError as exc:
+                        failure = {
+                            "tmdb_id": tmdb_id,
+                            "title": movie.get("title") or movie.get("original_title"),
+                            "url": f"https://www.themoviedb.org/movie/{tmdb_id}",
+                            "error": str(exc),
+                        }
+                        failed_movies.append(failure)
+                        logger.warning("TMDB movie detail failed: %s", failure)
+                        continue
 
                 total_pages = int(listing.get("total_pages") or page)
                 if page >= total_pages:
@@ -136,6 +149,7 @@ class TMDBClient:
 
         return TMDBIngestionBatch(
             movies=movies,
+            failed_movies=failed_movies,
             pages_requested=pages_requested,
             movie_details_requested=movie_details_requested,
             requests_made=self.requests_made,

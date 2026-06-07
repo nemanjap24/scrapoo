@@ -13,6 +13,10 @@ from streamlit.components.v1 import html as components_html
 
 API_BASE_URL = os.getenv("SCRAPOO_API_URL", "http://localhost:8000/api/v1")
 DEFAULT_TIMEOUT = float(os.getenv("SCRAPOO_API_TIMEOUT", "30"))
+DATA_SOURCES = {
+    "CSFD": "csfd",
+    "TMDB": "tmdb",
+}
 
 
 @st.cache_data(ttl=60)
@@ -24,8 +28,15 @@ def fetch_json(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, 
         return response.json()
 
 
+def with_source(params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    selected = st.session_state.get("data_source", "csfd")
+    merged = dict(params or {})
+    merged["source"] = selected
+    return merged
+
+
 def render_overview() -> None:
-    data = fetch_json("/analytics/overview", params={"limit": 10})
+    data = fetch_json("/analytics/overview", params=with_source({"limit": 10}))
     st.subheader("Collection Totals")
     cols = st.columns(2)
     cols[0].metric("Films", f"{data['total_films']:,}")
@@ -47,7 +58,7 @@ def render_people() -> None:
         st.info("Select at least one role to continue.")
         return
     params = {"roles": roles, "limit": limit, "min_films": min_films}
-    data = fetch_json("/analytics/people", params=params)
+    data = fetch_json("/analytics/people", params=with_source(params))
     for role_stats in data.get("roles", []):
         st.subheader(f"{role_stats['role'].title()}s")
         df = pd.DataFrame(role_stats["people"])
@@ -58,7 +69,7 @@ def render_people() -> None:
 
 def render_countries() -> None:
     limit = st.slider("Countries to show", min_value=5, max_value=30, value=10)
-    data = fetch_json("/analytics/countries", params={"limit": limit})
+    data = fetch_json("/analytics/countries", params=with_source({"limit": limit}))
     st.subheader("Country Share")
     df = pd.DataFrame(data["countries"])
     fig = px.pie(df, values="film_count", names="name", title="Film Share by Country")
@@ -69,7 +80,7 @@ def render_countries() -> None:
 def render_releases() -> None:
     bucket = st.selectbox("Grouping", options=["decade", "year"], index=0)
     limit = st.slider("Buckets to show", min_value=5, max_value=40, value=12)
-    data = fetch_json("/analytics/releases", params={"bucket": bucket, "limit": limit})
+    data = fetch_json("/analytics/releases", params=with_source({"bucket": bucket, "limit": limit}))
     st.subheader("Release Distribution")
     df = pd.DataFrame(data["buckets"])
     fig = px.bar(df, x="label", y="film_count", title=f"Films per {bucket}")
@@ -190,7 +201,7 @@ def render_network() -> None:
         "limit_edges": limit_edges,
         "min_shared_films": min_shared,
     }
-    data = fetch_json("/analytics/network/collaboration", params=params)
+    data = fetch_json("/analytics/network/collaboration", params=with_source(params))
     stats = data["stats"]
     cols = st.columns(3)
     cols[0].metric("Nodes", stats["node_count"])
@@ -226,12 +237,12 @@ def render_graph_analysis() -> None:
     min_core_degree = st.sidebar.slider("Minimum degree for core table", min_value=0, max_value=100, value=1)
     data = fetch_json(
         "/analytics/network/actor-projection",
-        params={
+        params=with_source({
             "max_diameter_nodes": max_diameter_nodes,
             "max_cast_size": max_cast_size,
             "top_core_actors": top_core_actors,
             "min_core_actor_degree": min_core_degree,
-        },
+        }),
     )
 
     stats = data["stats"]
@@ -375,7 +386,9 @@ def render_graph_analysis() -> None:
 def main() -> None:
     st.set_page_config(page_title="Scrapoo Dashboard", layout="wide")
     st.title("Scrapoo Analytics Dashboard")
-    st.caption("Data source: FastAPI analytics endpoints")
+    selected_label = st.sidebar.radio("Data Source", tuple(DATA_SOURCES), horizontal=True)
+    st.session_state["data_source"] = DATA_SOURCES[selected_label]
+    st.caption(f"Data source: {selected_label}")
     section = st.sidebar.radio(
         "Section",
         (

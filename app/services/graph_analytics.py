@@ -8,6 +8,7 @@ from typing import Dict, Iterable, List, Tuple
 
 import networkx as nx
 import numpy as np
+from tortoise.backends.base.client import BaseDBAsyncClient
 
 from app.models import Person, PersonInFilm
 
@@ -128,6 +129,7 @@ async def compute_collaboration_metrics(
     limit_nodes: int = 10,
     limit_edges: int = 10,
     min_shared_films: int = 1,
+    db: BaseDBAsyncClient | None = None,
 ) -> CollaborationAnalyticsResult:
     """Build a person collaboration graph and emit summary metrics."""
 
@@ -135,7 +137,7 @@ async def compute_collaboration_metrics(
     limit_edges = max(1, limit_edges)
     min_shared_films = max(1, min_shared_films)
 
-    film_members = await _load_film_memberships()
+    film_members = await _load_film_memberships(db=db)
     if not film_members:
         empty_stats = CollaborationStats(node_count=0, edge_count=0, density=0.0, average_degree=0.0)
         return CollaborationAnalyticsResult(stats=empty_stats, centrality=[], collaborations=[])
@@ -159,7 +161,7 @@ async def compute_collaboration_metrics(
         result = CollaborationAnalyticsResult(stats=stats, centrality=[], collaborations=[])
         return result
 
-    person_meta = await _load_person_meta(graph.nodes)
+    person_meta = await _load_person_meta(graph.nodes, db=db)
     centrality_metrics = _compute_top_centrality(graph, person_meta, limit_nodes)
     collaboration_metrics = _compute_top_edges(graph, person_meta, limit_edges, min_shared_films)
 
@@ -176,6 +178,7 @@ async def compute_actor_projection_analysis(
     max_cast_size: int = 30,
     top_core_actors: int = 25,
     min_core_actor_degree: int = 1,
+    db: BaseDBAsyncClient | None = None,
 ) -> GraphAnalysisResult:
     """Analyze the actor projection graph: actors are linked when they share a film."""
 
@@ -184,7 +187,7 @@ async def compute_actor_projection_analysis(
     top_core_actors = max(1, top_core_actors)
     min_core_actor_degree = max(0, min_core_actor_degree)
 
-    film_members = await _load_film_memberships(role="actor")
+    film_members = await _load_film_memberships(role="actor", db=db)
     film_members = {
         film_id: members
         for film_id, members in film_members.items()
@@ -224,7 +227,7 @@ async def compute_actor_projection_analysis(
             graph_edges=[],
         )
 
-    person_meta = await _load_person_meta(graph.nodes)
+    person_meta = await _load_person_meta(graph.nodes, db=db)
     core_metric = _compute_core_metric(
         graph,
         person_meta,
@@ -247,9 +250,13 @@ async def compute_actor_projection_analysis(
     )
 
 
-async def _load_film_memberships(role: str | None = None) -> Dict[int, List[int]]:
+async def _load_film_memberships(
+    role: str | None = None,
+    *,
+    db: BaseDBAsyncClient | None = None,
+) -> Dict[int, List[int]]:
     memberships = defaultdict(list)
-    query = PersonInFilm.all()
+    query = PersonInFilm.all().using_db(db)
     if role:
         query = query.filter(role__iexact=role)
     rows = await query.values_list("films_id", "persons_id")
@@ -276,11 +283,15 @@ def _build_projection_graph(film_members: Dict[int, List[int]]) -> nx.Graph:
     return graph
 
 
-async def _load_person_meta(person_ids: Iterable[int]) -> Dict[int, Tuple[str | None, str | None]]:
+async def _load_person_meta(
+    person_ids: Iterable[int],
+    *,
+    db: BaseDBAsyncClient | None = None,
+) -> Dict[int, Tuple[str | None, str | None]]:
     ids = list({int(pid) for pid in person_ids})
     if not ids:
         return {}
-    people = await Person.filter(id__in=ids).values_list("id", "name", "occupation")
+    people = await Person.filter(id__in=ids).using_db(db).values_list("id", "name", "occupation")
     return {int(pid): (name, occupation) for pid, name, occupation in people}
 
 

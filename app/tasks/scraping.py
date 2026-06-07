@@ -95,6 +95,8 @@ def run_scraping_job(
                 "people_collected": 0,
                 "chunks_processed": 0,
                 "chunk_details": [],
+                "failed_seed_count": 0,
+                "failed_seed_urls": [],
                 "duration_seconds": _elapsed_seconds(started_at),
                 "films_per_second": 0.0,
             }
@@ -109,6 +111,15 @@ def run_scraping_job(
             parallel_chunks=parallel_chunks,
         )
     )
+    failed_seed_urls = _collect_failed_seed_urls(chunk_details)
+    if failed_seed_urls:
+        logger.warning(
+            "CSFD scrape completed with %s failed or missing seed URLs: %s",
+            len(failed_seed_urls),
+            failed_seed_urls[:50],
+        )
+    else:
+        logger.info("CSFD scrape completed without failed or missing seed URLs")
 
     base_response.update(
         {
@@ -116,6 +127,8 @@ def run_scraping_job(
             "people_collected": saved_people,
             "chunks_processed": len(chunk_details),
             "chunk_details": chunk_details,
+            "failed_seed_count": len(failed_seed_urls),
+            "failed_seed_urls": failed_seed_urls,
             "duration_seconds": _elapsed_seconds(started_at),
             "films_per_second": _rate(saved_movies, started_at),
         }
@@ -177,10 +190,21 @@ def scrape_tmdb_top_movies(
             "duration_seconds": _elapsed_seconds(started_at),
         }
 
+    if batch.failed_movies:
+        logger.warning(
+            "TMDB ingestion completed with %s failed movie detail requests: %s",
+            len(batch.failed_movies),
+            batch.failed_movies[:50],
+        )
+    else:
+        logger.info("TMDB ingestion completed without failed movie detail requests")
+
     return {
         "status": "completed",
         "requested_limit": normalized_limit,
         "movies_fetched": len(batch.movies),
+        "movies_failed": len(batch.failed_movies),
+        "failed_movies": batch.failed_movies,
         "films_saved": films_saved,
         "people_saved": people_saved,
         "pages_requested": batch.pages_requested,
@@ -223,6 +247,7 @@ def scrape_movie_chunk(
     except Exception as exc:  # pragma: no cover - defensive logging edge
         meta["status"] = "failed"
         meta["error"] = str(exc)
+        meta["failed_seed_urls"] = seeds
         meta["duration_seconds"] = _elapsed_seconds(started_at)
         logger.exception("Chunk %s failed while crawling", chunk_index)
         return {
@@ -234,6 +259,17 @@ def scrape_movie_chunk(
     meta["status"] = "crawled"
     meta["films_crawled"] = len(batch.movies)
     meta["people_crawled"] = len(batch.people)
+    crawled_urls = _canonical_url_set(
+        payload.get("csfd_url") or payload.get("url")
+        for payload in batch.movies
+        if isinstance(payload, dict)
+    )
+    missing_urls = [
+        seed
+        for seed in seeds
+        if _canonical_url(seed) not in crawled_urls
+    ]
+    meta["failed_seed_urls"] = missing_urls
     meta["crawl_duration_seconds"] = _elapsed_seconds(started_at)
     meta["crawl_films_per_second"] = _rate(len(batch.movies), started_at)
     return {
@@ -702,6 +738,38 @@ def _chunked(sequence: Sequence[str], size: int) -> Iterable[list[str]]:
     total = len(sequence)
     for start in range(0, total, size):
         yield list(sequence[start : start + size])
+
+
+def _collect_failed_seed_urls(chunk_details: Iterable[dict]) -> list[str]:
+    failed_urls: list[str] = []
+    seen: set[str] = set()
+    for detail in chunk_details:
+        for url in detail.get("failed_seed_urls") or []:
+            cleaned = str(url or "").strip()
+            if not cleaned or cleaned in seen:
+                continue
+            failed_urls.append(cleaned)
+            seen.add(cleaned)
+    return failed_urls
+
+
+def _canonical_url_set(urls: Iterable[object]) -> set[str]:
+    return {_canonical_url(url) for url in urls if _canonical_url(url)}
+
+
+def _canonical_url(raw_url: object) -> str:
+    if not isinstance(raw_url, str):
+        return ""
+    url = raw_url.strip()
+    if not url:
+        return ""
+    for token in ("#", "?"):
+        if token in url:
+            url = url.split(token, 1)[0]
+    url = url.rstrip("/")
+    if url.endswith("/prehlad"):
+        url = url[: -len("/prehlad")]
+    return f"{url}/"
 
 
 def _elapsed_seconds(started_at: float) -> float:

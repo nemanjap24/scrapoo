@@ -11,8 +11,18 @@ def init_tortoise(app: FastAPI, models: Sequence[str] | None = None) -> None:
 
     register_tortoise(
         app,
-        db_url=settings.DATABASE_URL,
-        modules={"models": list(models or settings.TORTOISE_MODELS)},
+        config={
+            "connections": {
+                "default": settings.DATABASE_URL,
+                "tmdb": settings.TMDB_DATABASE_URL,
+            },
+            "apps": {
+                "models": {
+                    "models": list(models or settings.TORTOISE_MODELS),
+                    "default_connection": "default",
+                },
+            },
+        },
         generate_schemas=True,
         add_exception_handlers=True,
     )

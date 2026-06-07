@@ -5,6 +5,8 @@ from collections import Counter
 from typing import Sequence
 
 from fastapi import APIRouter, Query
+from tortoise import connections
+from tortoise.backends.base.client import BaseDBAsyncClient
 from tortoise.functions import Count
 
 from app.models import Country, Film, Person
@@ -36,15 +38,21 @@ from app.services.graph_analytics import compute_actor_projection_analysis, comp
 
 router = APIRouter()
 
+DATA_SOURCE_PATTERN = "^(csfd|tmdb)$"
+
 
 @router.get("/overview", response_model=AnalyticsOverview, summary="High-level scraping analytics")
-async def analytics_overview(limit: int = Query(5, ge=1, le=20)) -> AnalyticsOverview:
+async def analytics_overview(
+    limit: int = Query(5, ge=1, le=20),
+    source: str = Query("csfd", pattern=DATA_SOURCE_PATTERN),
+) -> AnalyticsOverview:
     bounded_limit = max(1, min(limit, 20))
-    total_films_task = Film.all().count()
-    total_people_task = Person.all().count()
-    top_actors_task = _top_people_by_role("actor", bounded_limit)
-    top_directors_task = _top_people_by_role("director", bounded_limit)
-    top_countries_task = _top_countries(bounded_limit)
+    db = _analytics_db(source)
+    total_films_task = Film.all().using_db(db).count()
+    total_people_task = Person.all().using_db(db).count()
+    top_actors_task = _top_people_by_role("actor", bounded_limit, db=db)
+    top_directors_task = _top_people_by_role("director", bounded_limit, db=db)
+    top_countries_task = _top_countries(bounded_limit, db=db)
 
     total_films, total_people, top_actors, top_directors, top_countries = await asyncio.gather(
         total_films_task,
@@ -72,12 +80,14 @@ async def analytics_people(
     roles: list[str] = Query(["actor", "director"], min_items=1, max_items=5),
     limit: int = Query(5, ge=1, le=30),
     min_films: int = Query(1, ge=1, le=100),
+    source: str = Query("csfd", pattern=DATA_SOURCE_PATTERN),
 ) -> PeopleAnalytics:
     bounded_limit = max(1, min(limit, 30))
+    db = _analytics_db(source)
     normalized_roles = _normalize_roles(roles)
     if not normalized_roles:
         normalized_roles = ["actor"]
-    tasks = [_top_people_by_role(role, bounded_limit, min_films=min_films) for role in normalized_roles]
+    tasks = [_top_people_by_role(role, bounded_limit, min_films=min_films, db=db) for role in normalized_roles]
     results = await asyncio.gather(*tasks)
     role_stats = [
         RolePeopleStats(role=role, people=stats)
@@ -92,15 +102,20 @@ async def analytics_people(
     response_model=CountriesAnalytics,
     summary="Film counts per country",
 )
-async def analytics_countries(limit: int = Query(10, ge=1, le=50)) -> CountriesAnalytics:
+async def analytics_countries(
+    limit: int = Query(10, ge=1, le=50),
+    source: str = Query("csfd", pattern=DATA_SOURCE_PATTERN),
+) -> CountriesAnalytics:
     bounded_limit = max(1, min(limit, 50))
-    total_films_task = Film.all().count()
+    db = _analytics_db(source)
+    total_films_task = Film.all().using_db(db).count()
     total_countries_task = (
         Country.annotate(film_count=Count("films"))
+        .using_db(db)
         .filter(film_count__gt=0)
         .count()
     )
-    top_countries_task = _top_countries(bounded_limit)
+    top_countries_task = _top_countries(bounded_limit, db=db)
     total_films, total_countries, top_countries = await asyncio.gather(
         total_films_task,
         total_countries_task,
@@ -130,11 +145,13 @@ async def analytics_countries(limit: int = Query(10, ge=1, le=50)) -> CountriesA
 async def analytics_releases(
     bucket: str = Query("decade", pattern="^(year|decade)$"),
     limit: int = Query(12, ge=1, le=120),
+    source: str = Query("csfd", pattern=DATA_SOURCE_PATTERN),
 ) -> ReleaseAnalytics:
+    db = _analytics_db(source)
     bucket_normalized = (bucket or "decade").lower()
     if bucket_normalized not in {"year", "decade"}:
         bucket_normalized = "decade"
-    release_years = await Film.filter(release_year__not_isnull=True).values_list("release_year", flat=True)
+    release_years = await Film.filter(release_year__not_isnull=True).using_db(db).values_list("release_year", flat=True)
     if not release_years:
         return ReleaseAnalytics(grouping=bucket_normalized, total_buckets=0, total_films=0, buckets=[])
     counter: Counter[str] = Counter()
@@ -172,11 +189,13 @@ async def analytics_network_collaboration(
     limit_nodes: int = Query(10, ge=1, le=50),
     limit_edges: int = Query(10, ge=1, le=50),
     min_shared_films: int = Query(2, ge=1, le=25),
+    source: str = Query("csfd", pattern=DATA_SOURCE_PATTERN),
 ) -> CollaborationAnalytics:
     result = await compute_collaboration_metrics(
         limit_nodes=limit_nodes,
         limit_edges=limit_edges,
         min_shared_films=min_shared_films,
+        db=_analytics_db(source),
     )
     stats = GraphStats(
         node_count=result.stats.node_count,
@@ -220,12 +239,14 @@ async def analytics_actor_projection(
     max_cast_size: int = Query(30, ge=2, le=500),
     top_core_actors: int = Query(25, ge=1, le=100),
     min_core_actor_degree: int = Query(1, ge=0, le=500),
+    source: str = Query("csfd", pattern=DATA_SOURCE_PATTERN),
 ) -> ActorProjectionAnalytics:
     result = await compute_actor_projection_analysis(
         max_diameter_nodes=max_diameter_nodes,
         max_cast_size=max_cast_size,
         top_core_actors=top_core_actors,
         min_core_actor_degree=min_core_actor_degree,
+        db=_analytics_db(source),
     )
     return ActorProjectionAnalytics(
         stats=GraphStats(
@@ -335,10 +356,17 @@ async def analytics_actor_projection(
     )
 
 
-async def _top_people_by_role(role: str, limit: int, *, min_films: int = 1) -> list[PersonStats]:
+async def _top_people_by_role(
+    role: str,
+    limit: int,
+    *,
+    min_films: int = 1,
+    db: BaseDBAsyncClient | None = None,
+) -> list[PersonStats]:
     role_normalized = role.lower()
     people = (
         await Person.filter(film_roles__role__iexact=role_normalized)
+        .using_db(db)
         .annotate(film_count=Count("film_roles"))
         .order_by("-film_count", "name")
         .limit(limit)
@@ -359,9 +387,15 @@ async def _top_people_by_role(role: str, limit: int, *, min_films: int = 1) -> l
     return stats
 
 
-async def _top_countries(limit: int, *, min_films: int = 1) -> list[CountryStats]:
+async def _top_countries(
+    limit: int,
+    *,
+    min_films: int = 1,
+    db: BaseDBAsyncClient | None = None,
+) -> list[CountryStats]:
     countries = (
         await Country.filter(films__id__not_isnull=True)
+        .using_db(db)
         .annotate(film_count=Count("films"))
         .order_by("-film_count", "name")
         .limit(limit)
@@ -379,6 +413,10 @@ async def _top_countries(limit: int, *, min_films: int = 1) -> list[CountryStats
             )
         )
     return stats
+
+
+def _analytics_db(source: str) -> BaseDBAsyncClient:
+    return connections.get("tmdb" if source == "tmdb" else "default")
 
 
 def _normalize_roles(roles: Sequence[str] | None) -> list[str]:
