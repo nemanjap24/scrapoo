@@ -86,9 +86,9 @@ class EnrichPeopleJobResponse(BaseModel):
 
 class TMDBScrapeRequest(BaseModel):
     limit: int = Field(
-        default=3000,
+        default=30000,
         ge=1,
-        le=3000,
+        le=30000,
         description="Maximum number of TMDB movies to import, sorted by TMDB popularity descending.",
     )
     language: str = Field(

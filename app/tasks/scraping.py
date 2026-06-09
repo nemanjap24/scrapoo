@@ -164,7 +164,7 @@ def enrich_people_job(
 
 @celery_app.task(name="tasks.scraping.scrape_tmdb_top_movies")
 def scrape_tmdb_top_movies(
-    limit: int = 3000,
+    limit: int = 30000,
     language: str = "en-US",
     include_adult: bool = False,
     actor_limit: int | None = None,
@@ -172,7 +172,7 @@ def scrape_tmdb_top_movies(
     """Fetch top TMDB movies by popularity with credits and persist them separately."""
 
     started_at = time.monotonic()
-    normalized_limit = min(3000, max(1, int(limit or 3000)))
+    normalized_limit = min(30000, max(1, int(limit or 30000)))
     try:
         client = TMDBClient()
         batch = client.fetch_top_movies_with_credits(

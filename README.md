@@ -48,14 +48,14 @@ curl -X POST http://localhost:8000/api/v1/movies/scrape \
 
 ### Triggering TMDB ingestion
 
-TMDB ingestion imports up to the top 3000 movies by TMDB popularity into the separate `scrapoo_tmdb` database.
+TMDB ingestion imports up to the top 30000 movies by TMDB popularity into the separate `scrapoo_tmdb` database.
 Each movie is fetched with appended credits so actors and directors are persisted with the film.
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/movies/tmdb/scrape \
 	-H "Content-Type: application/json" \
 	-d '{
-			"limit": 3000,
+			"limit": 30000,
 			"language": "en-US",
 			"include_adult": false
 		}'
