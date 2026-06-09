@@ -204,7 +204,7 @@ async def compute_actor_projection_analysis(
             movie_count=0,
             largest_component_count=0,
             power_law=PowerLawMetric(alpha=None, xmin=None, r_squared=None, degree_distribution=[]),
-            clustering=ClusteringMetric(average_clustering=0.0, transitivity=0.0),
+            clustering=ClusteringMetric(average_clustering=0.0, transitivity=0.0, coefficient_distribution=[]),
             path=PathMetric(
                 largest_component_nodes=0,
                 largest_component_share=0.0,

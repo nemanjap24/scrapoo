@@ -34,7 +34,12 @@ from app.schemas import (
     ReleaseBucketStats,
     RolePeopleStats,
 )
-from app.services.graph_analytics import compute_actor_projection_analysis, compute_collaboration_metrics
+from app.services.analytics_cache import get_cached_json, set_cached_json
+from app.services.graph_analytics import (
+    GraphAnalysisResult,
+    compute_actor_projection_analysis,
+    compute_collaboration_metrics,
+)
 
 router = APIRouter()
 
@@ -241,6 +246,17 @@ async def analytics_actor_projection(
     min_core_actor_degree: int = Query(1, ge=0, le=500),
     source: str = Query("csfd", pattern=DATA_SOURCE_PATTERN),
 ) -> ActorProjectionAnalytics:
+    cache_key = _actor_projection_cache_key(
+        source=source,
+        max_diameter_nodes=max_diameter_nodes,
+        max_cast_size=max_cast_size,
+        top_core_actors=top_core_actors,
+        min_core_actor_degree=min_core_actor_degree,
+    )
+    cached = await get_cached_json(cache_key)
+    if cached:
+        return ActorProjectionAnalytics.model_validate_json(cached)
+
     result = await compute_actor_projection_analysis(
         max_diameter_nodes=max_diameter_nodes,
         max_cast_size=max_cast_size,
@@ -248,6 +264,12 @@ async def analytics_actor_projection(
         min_core_actor_degree=min_core_actor_degree,
         db=_analytics_db(source),
     )
+    response = _actor_projection_response(result)
+    await set_cached_json(cache_key, response.model_dump_json())
+    return response
+
+
+def _actor_projection_response(result: GraphAnalysisResult) -> ActorProjectionAnalytics:
     return ActorProjectionAnalytics(
         stats=GraphStats(
             node_count=result.stats.node_count,
@@ -353,6 +375,24 @@ async def analytics_actor_projection(
             )
             for edge in result.graph_edges
         ],
+    )
+
+
+def _actor_projection_cache_key(
+    *,
+    source: str,
+    max_diameter_nodes: int,
+    max_cast_size: int,
+    top_core_actors: int,
+    min_core_actor_degree: int,
+) -> str:
+    return (
+        "analytics:actor-projection:v1:"
+        f"source={source}:"
+        f"max_diameter_nodes={max_diameter_nodes}:"
+        f"max_cast_size={max_cast_size}:"
+        f"top_core_actors={top_core_actors}:"
+        f"min_core_actor_degree={min_core_actor_degree}"
     )
 
 

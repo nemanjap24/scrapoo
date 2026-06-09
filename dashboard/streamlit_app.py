@@ -12,7 +12,7 @@ import streamlit as st
 from streamlit.components.v1 import html as components_html
 
 API_BASE_URL = os.getenv("SCRAPOO_API_URL", "http://localhost:8000/api/v1")
-DEFAULT_TIMEOUT = float(os.getenv("SCRAPOO_API_TIMEOUT", "30"))
+DEFAULT_TIMEOUT = float(os.getenv("SCRAPOO_API_TIMEOUT", "120"))
 DATA_SOURCES = {
     "CSFD": "csfd",
     "TMDB": "tmdb",
