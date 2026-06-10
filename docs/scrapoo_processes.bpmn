@@ -1,0 +1,500 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_Scrapoo_Processes" targetNamespace="https://scrapoo.local/bpmn" exporter="Camunda Modeler" exporterVersion="5.47.0">
+  <bpmn:process id="Process_Analytics_Request" name="Analyticka poziadavka z dashboardu" isExecutable="false">
+    <bpmn:documentation>
+      Proces opisuje bezny tok, pri ktorom pouzivatel v Streamlit dashboarde vyberie analyticku sekciu a system zobrazi vysledky nacitane z FastAPI backendu.
+    </bpmn:documentation>
+    <bpmn:startEvent id="Analytics_Start" name="Pouzivatel otvori dashboard">
+      <bpmn:outgoing>Flow_Analytics_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="Analytics_Select_View" name="Vyber zdroja dat z analytickej sekcie">
+      <bpmn:incoming>Flow_Analytics_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_Analytics_2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:serviceTask id="Analytics_Request_API" name="Dashboard odosle REST poziadavku">
+      <bpmn:incoming>Flow_Analytics_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_Analytics_3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Analytics_Read_Data" name="Backend nacita data z vybranej databazy">
+      <bpmn:incoming>Flow_Analytics_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_Analytics_4</bpmn:outgoing>
+      <bpmn:dataOutputAssociation id="DataOutputAssociation_0li294k">
+        <bpmn:targetRef>DataStoreReference_1f7wipv</bpmn:targetRef>
+      </bpmn:dataOutputAssociation>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="Analytics_Graph_Required" name="Je pozadovana grafova analyza?">
+      <bpmn:incoming>Flow_Analytics_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_Analytics_5a</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Analytics_5b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Analytics_Compute_Graph" name="Vypocet grafovych metrik">
+      <bpmn:incoming>Flow_Analytics_5a</bpmn:incoming>
+      <bpmn:outgoing>Flow_Analytics_6a</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Analytics_Prepare_Response" name="Priprava JSON odpovede">
+      <bpmn:incoming>Flow_184e3ke</bpmn:incoming>
+      <bpmn:outgoing>Flow_Analytics_7</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Analytics_Render_Dashboard" name="Zobrazenie tabuliek a grafov v dashboarde">
+      <bpmn:incoming>Flow_Analytics_7</bpmn:incoming>
+      <bpmn:outgoing>Flow_Analytics_8</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Analytics_End" name="Analyticky vystup zobrazeny">
+      <bpmn:incoming>Flow_Analytics_8</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_Analytics_1" sourceRef="Analytics_Start" targetRef="Analytics_Select_View" />
+    <bpmn:sequenceFlow id="Flow_Analytics_2" sourceRef="Analytics_Select_View" targetRef="Analytics_Request_API" />
+    <bpmn:sequenceFlow id="Flow_Analytics_3" sourceRef="Analytics_Request_API" targetRef="Analytics_Read_Data" />
+    <bpmn:sequenceFlow id="Flow_Analytics_4" sourceRef="Analytics_Read_Data" targetRef="Analytics_Graph_Required" />
+    <bpmn:sequenceFlow id="Flow_Analytics_5a" name="ano" sourceRef="Analytics_Graph_Required" targetRef="Analytics_Compute_Graph" />
+    <bpmn:sequenceFlow id="Flow_Analytics_5b" name="nie" sourceRef="Analytics_Graph_Required" targetRef="Gateway_1f8jy38" />
+    <bpmn:sequenceFlow id="Flow_Analytics_6a" sourceRef="Analytics_Compute_Graph" targetRef="Gateway_1f8jy38" />
+    <bpmn:sequenceFlow id="Flow_Analytics_7" sourceRef="Analytics_Prepare_Response" targetRef="Analytics_Render_Dashboard" />
+    <bpmn:sequenceFlow id="Flow_Analytics_8" sourceRef="Analytics_Render_Dashboard" targetRef="Analytics_End" />
+    <bpmn:exclusiveGateway id="Gateway_1f8jy38" name="Je pozadovana grafova analyza?">
+      <bpmn:incoming>Flow_Analytics_6a</bpmn:incoming>
+      <bpmn:incoming>Flow_Analytics_5b</bpmn:incoming>
+      <bpmn:outgoing>Flow_184e3ke</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_184e3ke" sourceRef="Gateway_1f8jy38" targetRef="Analytics_Prepare_Response" />
+    <bpmn:dataStoreReference id="DataStoreReference_1f7wipv" />
+    <bpmn:textAnnotation id="TextAnnotation_1w4lwrk">
+      <bpmn:text>doplnit</bpmn:text>
+    </bpmn:textAnnotation>
+    <bpmn:association id="Association_0p9ovbm" associationDirection="None" sourceRef="DataStoreReference_1f7wipv" targetRef="TextAnnotation_1w4lwrk" />
+  </bpmn:process>
+  <bpmn:process id="Process_CSFD_Scraping" name="Ziskavanie dat z CSFD" isExecutable="false">
+    <bpmn:documentation>
+      Proces opisuje spustenie CSFD scrapingu cez API, delegovanie dlhej operacie do Celery workera, crawling pomocou Scrapy a ulozenie dat do PostgreSQL databazy.
+    </bpmn:documentation>
+    <bpmn:startEvent id="CSFD_Start" name="Administrator spusti CSFD scraping">
+      <bpmn:outgoing>Flow_CSFD_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="CSFD_Validate_Request" name="API validuje parametre poziadavky">
+      <bpmn:incoming>Flow_CSFD_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_CSFD_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="CSFD_Resolve_Sitemap" name="Nacitanie a vyber sitemap suborov">
+      <bpmn:incoming>Flow_CSFD_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_CSFD_3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="CSFD_Sitemap_Available" name="Su dostupne sitemap URL?">
+      <bpmn:incoming>Flow_CSFD_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_CSFD_4a</bpmn:outgoing>
+      <bpmn:outgoing>Flow_CSFD_4b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="CSFD_Enqueue_Task" name="Zaradenie Celery ulohy">
+      <bpmn:incoming>Flow_CSFD_4a</bpmn:incoming>
+      <bpmn:outgoing>Flow_CSFD_5</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="CSFD_Expand_Seeds" name="Worker rozsiri sitemap na URL filmov">
+      <bpmn:incoming>Flow_CSFD_5</bpmn:incoming>
+      <bpmn:outgoing>Flow_CSFD_6</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="CSFD_Crawl" name="Scrapy spracuje filmove stranky">
+      <bpmn:incoming>Flow_CSFD_6</bpmn:incoming>
+      <bpmn:outgoing>Flow_CSFD_7</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="CSFD_Persist" name="Ulozenie filmov, osob a vztahov">
+      <bpmn:incoming>Flow_CSFD_7</bpmn:incoming>
+      <bpmn:outgoing>Flow_CSFD_8</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="CSFD_Report_Status" name="Spristupnenie stavu ulohy cez API">
+      <bpmn:incoming>Flow_CSFD_8</bpmn:incoming>
+      <bpmn:outgoing>Flow_CSFD_9</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="CSFD_End_Success" name="CSFD data ulozene">
+      <bpmn:incoming>Flow_CSFD_9</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="CSFD_End_Error" name="Poziadavka odmietnuta">
+      <bpmn:incoming>Flow_CSFD_4b</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_CSFD_1" sourceRef="CSFD_Start" targetRef="CSFD_Validate_Request" />
+    <bpmn:sequenceFlow id="Flow_CSFD_2" sourceRef="CSFD_Validate_Request" targetRef="CSFD_Resolve_Sitemap" />
+    <bpmn:sequenceFlow id="Flow_CSFD_3" sourceRef="CSFD_Resolve_Sitemap" targetRef="CSFD_Sitemap_Available" />
+    <bpmn:sequenceFlow id="Flow_CSFD_4a" name="ano" sourceRef="CSFD_Sitemap_Available" targetRef="CSFD_Enqueue_Task" />
+    <bpmn:sequenceFlow id="Flow_CSFD_4b" name="nie" sourceRef="CSFD_Sitemap_Available" targetRef="CSFD_End_Error" />
+    <bpmn:sequenceFlow id="Flow_CSFD_5" sourceRef="CSFD_Enqueue_Task" targetRef="CSFD_Expand_Seeds" />
+    <bpmn:sequenceFlow id="Flow_CSFD_6" sourceRef="CSFD_Expand_Seeds" targetRef="CSFD_Crawl" />
+    <bpmn:sequenceFlow id="Flow_CSFD_7" sourceRef="CSFD_Crawl" targetRef="CSFD_Persist" />
+    <bpmn:sequenceFlow id="Flow_CSFD_8" sourceRef="CSFD_Persist" targetRef="CSFD_Report_Status" />
+    <bpmn:sequenceFlow id="Flow_CSFD_9" sourceRef="CSFD_Report_Status" targetRef="CSFD_End_Success" />
+  </bpmn:process>
+  <bpmn:process id="Process_TMDB_Ingestion" name="Import dat z TMDB" isExecutable="false">
+    <bpmn:documentation>
+      Proces opisuje import filmov z TMDB API do samostatnej TMDB PostgreSQL databazy.
+    </bpmn:documentation>
+    <bpmn:startEvent id="TMDB_Start" name="Administrator spusti TMDB import">
+      <bpmn:outgoing>Flow_TMDB_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="TMDB_Enqueue" name="API zaradi Celery ulohu">
+      <bpmn:incoming>Flow_TMDB_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_TMDB_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="TMDB_Check_Config" name="Worker overi TMDB konfiguraciu">
+      <bpmn:incoming>Flow_TMDB_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_TMDB_3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="TMDB_Config_OK" name="Je dostupny API kluc alebo token?">
+      <bpmn:incoming>Flow_TMDB_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_TMDB_4a</bpmn:outgoing>
+      <bpmn:outgoing>Flow_TMDB_4b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="TMDB_Fetch" name="Nacitanie filmov a credits z TMDB API">
+      <bpmn:incoming>Flow_TMDB_4a</bpmn:incoming>
+      <bpmn:outgoing>Flow_TMDB_5</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="TMDB_Map" name="Transformacia na interny datovy model">
+      <bpmn:incoming>Flow_TMDB_5</bpmn:incoming>
+      <bpmn:outgoing>Flow_TMDB_6</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="TMDB_Persist" name="Ulozenie do TMDB databazy">
+      <bpmn:incoming>Flow_TMDB_6</bpmn:incoming>
+      <bpmn:outgoing>Flow_TMDB_7</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="TMDB_End_Success" name="TMDB import dokonceny">
+      <bpmn:incoming>Flow_TMDB_7</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="TMDB_End_Error" name="Import zlyhal na konfiguracii">
+      <bpmn:incoming>Flow_TMDB_4b</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_TMDB_1" sourceRef="TMDB_Start" targetRef="TMDB_Enqueue" />
+    <bpmn:sequenceFlow id="Flow_TMDB_2" sourceRef="TMDB_Enqueue" targetRef="TMDB_Check_Config" />
+    <bpmn:sequenceFlow id="Flow_TMDB_3" sourceRef="TMDB_Check_Config" targetRef="TMDB_Config_OK" />
+    <bpmn:sequenceFlow id="Flow_TMDB_4a" name="ano" sourceRef="TMDB_Config_OK" targetRef="TMDB_Fetch" />
+    <bpmn:sequenceFlow id="Flow_TMDB_4b" name="nie" sourceRef="TMDB_Config_OK" targetRef="TMDB_End_Error" />
+    <bpmn:sequenceFlow id="Flow_TMDB_5" sourceRef="TMDB_Fetch" targetRef="TMDB_Map" />
+    <bpmn:sequenceFlow id="Flow_TMDB_6" sourceRef="TMDB_Map" targetRef="TMDB_Persist" />
+    <bpmn:sequenceFlow id="Flow_TMDB_7" sourceRef="TMDB_Persist" targetRef="TMDB_End_Success" />
+  </bpmn:process>
+  <bpmn:process id="Process_Person_Enrichment" name="Obohatenie osob z CSFD" isExecutable="false">
+    <bpmn:documentation>
+      Proces opisuje doplnkove obohatenie existujucich osob, ktore boli predtym vytvorene ako stubs pocas filmoveho scrapingu.
+    </bpmn:documentation>
+    <bpmn:startEvent id="People_Start" name="Administrator spusti obohatenie osob">
+      <bpmn:outgoing>Flow_People_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="People_Enqueue" name="API zaradi enrichment ulohu">
+      <bpmn:incoming>Flow_People_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_People_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="People_Select" name="Worker vyberie osoby na obohatenie">
+      <bpmn:incoming>Flow_People_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_People_3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="People_Crawl" name="Crawling detailov osob z CSFD">
+      <bpmn:incoming>Flow_People_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_People_4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="People_Update" name="Aktualizacia udajov osob v databaze">
+      <bpmn:incoming>Flow_People_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_People_5</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="People_End" name="Osoby obohatene">
+      <bpmn:incoming>Flow_People_5</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_People_1" sourceRef="People_Start" targetRef="People_Enqueue" />
+    <bpmn:sequenceFlow id="Flow_People_2" sourceRef="People_Enqueue" targetRef="People_Select" />
+    <bpmn:sequenceFlow id="Flow_People_3" sourceRef="People_Select" targetRef="People_Crawl" />
+    <bpmn:sequenceFlow id="Flow_People_4" sourceRef="People_Crawl" targetRef="People_Update" />
+    <bpmn:sequenceFlow id="Flow_People_5" sourceRef="People_Update" targetRef="People_End" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_Analytics_Request" name="Analyticka poziadavka">
+    <bpmndi:BPMNPlane id="Plane_Analytics_Request" bpmnElement="Process_Analytics_Request">
+      <bpmndi:BPMNShape id="Shape_Analytics_Start" bpmnElement="Analytics_Start">
+        <dc:Bounds x="180" y="290" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="158" y="326" width="81" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Analytics_Select_View" bpmnElement="Analytics_Select_View">
+        <dc:Bounds x="270" y="268" width="150" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Analytics_Request_API" bpmnElement="Analytics_Request_API">
+        <dc:Bounds x="470" y="268" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Analytics_Read_Data" bpmnElement="Analytics_Read_Data">
+        <dc:Bounds x="670" y="268" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Analytics_Graph_Required" bpmnElement="Analytics_Graph_Required" isMarkerVisible="true">
+        <dc:Bounds x="885" y="283" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="868" y="342.5" width="84" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Analytics_Compute_Graph" bpmnElement="Analytics_Compute_Graph">
+        <dc:Bounds x="1010" y="190" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_15y8olg" bpmnElement="Gateway_1f8jy38" isMarkerVisible="true">
+        <dc:Bounds x="1205" y="283" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1188" y="343" width="84" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Analytics_End" bpmnElement="Analytics_End">
+        <dc:Bounds x="1782" y="290" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1758" y="326" width="85" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Analytics_Render_Dashboard" bpmnElement="Analytics_Render_Dashboard">
+        <dc:Bounds x="1545" y="268" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Analytics_Prepare_Response" bpmnElement="Analytics_Prepare_Response">
+        <dc:Bounds x="1345" y="260" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DataStoreReference_1f7wipv_di" bpmnElement="DataStoreReference_1f7wipv">
+        <dc:Bounds x="715" y="165" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Association_0p9ovbm_di" bpmnElement="Association_0p9ovbm">
+        <di:waypoint x="761" y="165" />
+        <di:waypoint x="807" y="110" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_Analytics_1" bpmnElement="Flow_Analytics_1">
+        <di:waypoint x="216" y="308" />
+        <di:waypoint x="270" y="308" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_Analytics_2" bpmnElement="Flow_Analytics_2">
+        <di:waypoint x="420" y="308" />
+        <di:waypoint x="470" y="308" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_Analytics_3" bpmnElement="Flow_Analytics_3">
+        <di:waypoint x="620" y="308" />
+        <di:waypoint x="670" y="308" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_Analytics_4" bpmnElement="Flow_Analytics_4">
+        <di:waypoint x="820" y="308" />
+        <di:waypoint x="885" y="308" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_Analytics_5a" bpmnElement="Flow_Analytics_5a">
+        <di:waypoint x="910" y="283" />
+        <di:waypoint x="910" y="230" />
+        <di:waypoint x="1010" y="230" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="916" y="247" width="19" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_Analytics_5b" bpmnElement="Flow_Analytics_5b">
+        <di:waypoint x="935" y="308" />
+        <di:waypoint x="1205" y="308" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1062" y="283" width="15" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_Analytics_6a" bpmnElement="Flow_Analytics_6a">
+        <di:waypoint x="1160" y="230" />
+        <di:waypoint x="1230" y="230" />
+        <di:waypoint x="1230" y="283" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_184e3ke_di" bpmnElement="Flow_184e3ke">
+        <di:waypoint x="1255" y="308" />
+        <di:waypoint x="1300" y="308" />
+        <di:waypoint x="1300" y="300" />
+        <di:waypoint x="1345" y="300" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_Analytics_8" bpmnElement="Flow_Analytics_8">
+        <di:waypoint x="1620" y="268" />
+        <di:waypoint x="1620" y="248" />
+        <di:waypoint x="1800" y="248" />
+        <di:waypoint x="1800" y="290" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_Analytics_7" bpmnElement="Flow_Analytics_7">
+        <di:waypoint x="1495" y="300" />
+        <di:waypoint x="1520" y="300" />
+        <di:waypoint x="1520" y="308" />
+        <di:waypoint x="1545" y="308" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNShape id="TextAnnotation_1w4lwrk_di" bpmnElement="TextAnnotation_1w4lwrk">
+        <dc:Bounds x="770" y="80" width="99.99656781987919" height="29.99725425590335" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="DataOutputAssociation_0li294k_di" bpmnElement="DataOutputAssociation_0li294k">
+        <di:waypoint x="743" y="268" />
+        <di:waypoint x="741" y="215" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+  <bpmndi:BPMNDiagram id="Diagram_CSFD_Scraping" name="Ziskavanie dat z CSFD">
+    <bpmndi:BPMNPlane id="Plane_CSFD_Scraping" bpmnElement="Process_CSFD_Scraping">
+      <bpmndi:BPMNShape id="Shape_CSFD_Start" bpmnElement="CSFD_Start">
+        <dc:Bounds x="100" y="120" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_CSFD_Validate_Request" bpmnElement="CSFD_Validate_Request">
+        <dc:Bounds x="190" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_CSFD_Resolve_Sitemap" bpmnElement="CSFD_Resolve_Sitemap">
+        <dc:Bounds x="390" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_CSFD_Sitemap_Available" bpmnElement="CSFD_Sitemap_Available" isMarkerVisible="true">
+        <dc:Bounds x="600" y="113" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_CSFD_Enqueue_Task" bpmnElement="CSFD_Enqueue_Task">
+        <dc:Bounds x="720" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_CSFD_Expand_Seeds" bpmnElement="CSFD_Expand_Seeds">
+        <dc:Bounds x="920" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_CSFD_Crawl" bpmnElement="CSFD_Crawl">
+        <dc:Bounds x="1120" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_CSFD_Persist" bpmnElement="CSFD_Persist">
+        <dc:Bounds x="1320" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_CSFD_Report_Status" bpmnElement="CSFD_Report_Status">
+        <dc:Bounds x="1520" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_CSFD_End_Success" bpmnElement="CSFD_End_Success">
+        <dc:Bounds x="1730" y="120" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_CSFD_End_Error" bpmnElement="CSFD_End_Error">
+        <dc:Bounds x="607" y="260" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_Flow_CSFD_1" bpmnElement="Flow_CSFD_1">
+        <di:waypoint x="136" y="138" />
+        <di:waypoint x="190" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_CSFD_2" bpmnElement="Flow_CSFD_2">
+        <di:waypoint x="340" y="138" />
+        <di:waypoint x="390" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_CSFD_3" bpmnElement="Flow_CSFD_3">
+        <di:waypoint x="540" y="138" />
+        <di:waypoint x="600" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_CSFD_4a" bpmnElement="Flow_CSFD_4a">
+        <di:waypoint x="650" y="138" />
+        <di:waypoint x="720" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_CSFD_4b" bpmnElement="Flow_CSFD_4b">
+        <di:waypoint x="625" y="163" />
+        <di:waypoint x="625" y="260" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_CSFD_5" bpmnElement="Flow_CSFD_5">
+        <di:waypoint x="870" y="138" />
+        <di:waypoint x="920" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_CSFD_6" bpmnElement="Flow_CSFD_6">
+        <di:waypoint x="1070" y="138" />
+        <di:waypoint x="1120" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_CSFD_7" bpmnElement="Flow_CSFD_7">
+        <di:waypoint x="1270" y="138" />
+        <di:waypoint x="1320" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_CSFD_8" bpmnElement="Flow_CSFD_8">
+        <di:waypoint x="1470" y="138" />
+        <di:waypoint x="1520" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_CSFD_9" bpmnElement="Flow_CSFD_9">
+        <di:waypoint x="1670" y="138" />
+        <di:waypoint x="1730" y="138" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+  <bpmndi:BPMNDiagram id="Diagram_TMDB_Ingestion" name="Import dat z TMDB">
+    <bpmndi:BPMNPlane id="Plane_TMDB_Ingestion" bpmnElement="Process_TMDB_Ingestion">
+      <bpmndi:BPMNShape id="Shape_TMDB_Start" bpmnElement="TMDB_Start">
+        <dc:Bounds x="100" y="120" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_TMDB_Enqueue" bpmnElement="TMDB_Enqueue">
+        <dc:Bounds x="190" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_TMDB_Check_Config" bpmnElement="TMDB_Check_Config">
+        <dc:Bounds x="390" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_TMDB_Config_OK" bpmnElement="TMDB_Config_OK" isMarkerVisible="true">
+        <dc:Bounds x="600" y="113" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_TMDB_Fetch" bpmnElement="TMDB_Fetch">
+        <dc:Bounds x="720" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_TMDB_Map" bpmnElement="TMDB_Map">
+        <dc:Bounds x="920" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_TMDB_Persist" bpmnElement="TMDB_Persist">
+        <dc:Bounds x="1120" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_TMDB_End_Success" bpmnElement="TMDB_End_Success">
+        <dc:Bounds x="1330" y="120" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_TMDB_End_Error" bpmnElement="TMDB_End_Error">
+        <dc:Bounds x="607" y="260" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_Flow_TMDB_1" bpmnElement="Flow_TMDB_1">
+        <di:waypoint x="136" y="138" />
+        <di:waypoint x="190" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_TMDB_2" bpmnElement="Flow_TMDB_2">
+        <di:waypoint x="340" y="138" />
+        <di:waypoint x="390" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_TMDB_3" bpmnElement="Flow_TMDB_3">
+        <di:waypoint x="540" y="138" />
+        <di:waypoint x="600" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_TMDB_4a" bpmnElement="Flow_TMDB_4a">
+        <di:waypoint x="650" y="138" />
+        <di:waypoint x="720" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_TMDB_4b" bpmnElement="Flow_TMDB_4b">
+        <di:waypoint x="625" y="163" />
+        <di:waypoint x="625" y="260" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_TMDB_5" bpmnElement="Flow_TMDB_5">
+        <di:waypoint x="870" y="138" />
+        <di:waypoint x="920" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_TMDB_6" bpmnElement="Flow_TMDB_6">
+        <di:waypoint x="1070" y="138" />
+        <di:waypoint x="1120" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_TMDB_7" bpmnElement="Flow_TMDB_7">
+        <di:waypoint x="1270" y="138" />
+        <di:waypoint x="1330" y="138" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+  <bpmndi:BPMNDiagram id="Diagram_Person_Enrichment" name="Obohatenie osob z CSFD">
+    <bpmndi:BPMNPlane id="Plane_Person_Enrichment" bpmnElement="Process_Person_Enrichment">
+      <bpmndi:BPMNShape id="Shape_People_Start" bpmnElement="People_Start">
+        <dc:Bounds x="100" y="120" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_People_Enqueue" bpmnElement="People_Enqueue">
+        <dc:Bounds x="190" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_People_Select" bpmnElement="People_Select">
+        <dc:Bounds x="390" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_People_Crawl" bpmnElement="People_Crawl">
+        <dc:Bounds x="590" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_People_Update" bpmnElement="People_Update">
+        <dc:Bounds x="790" y="98" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_People_End" bpmnElement="People_End">
+        <dc:Bounds x="1000" y="120" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_Flow_People_1" bpmnElement="Flow_People_1">
+        <di:waypoint x="136" y="138" />
+        <di:waypoint x="190" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_People_2" bpmnElement="Flow_People_2">
+        <di:waypoint x="340" y="138" />
+        <di:waypoint x="390" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_People_3" bpmnElement="Flow_People_3">
+        <di:waypoint x="540" y="138" />
+        <di:waypoint x="590" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_People_4" bpmnElement="Flow_People_4">
+        <di:waypoint x="740" y="138" />
+        <di:waypoint x="790" y="138" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_People_5" bpmnElement="Flow_People_5">
+        <di:waypoint x="940" y="138" />
+        <di:waypoint x="1000" y="138" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

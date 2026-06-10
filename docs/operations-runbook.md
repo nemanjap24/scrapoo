@@ -81,6 +81,8 @@ Poll status:
 curl -sS "http://localhost:8000/api/v1/movies/scrape/<task_id>"
 ```
 
+If the result contains `blocked_by_antibot=true`, CSFD returned an anti-bot challenge page instead of film HTML. In that case the worker is healthy, but live CSFD extraction cannot continue. Check `antibot_urls` and `antibot_reason` in the task result, keep scheduled CSFD scraping disabled, and use TMDB ingestion or previously collected CSFD data until upstream access is available again.
+
 Periodic scheduling (Celery beat):
 
 ```bash
@@ -127,6 +129,12 @@ curl -X POST "http://localhost:8000/api/v1/movies/scrape" \
 Issue: `ReactorNotRestartable` in scraping path
 - Current architecture uses subprocess helper (`python -m app.services.csfd_scraper`) to isolate Twisted reactor per run.
 - If this reappears, inspect worker logs and confirm helper subprocess invocation paths.
+
+Issue: CSFD scrape returns `blocked_by_antibot=true`
+- CSFD served an anti-bot challenge page, commonly titled `Making sure you're not a bot!`.
+- The scrape task stops early and records `antibot_urls` to avoid repeatedly requesting pages that cannot be parsed.
+- This is an upstream access limitation, not an API, Celery, Redis, or database failure.
+- Keep `SCRAPE_SCHEDULE_MINUTES=0` while this persists and prefer TMDB ingestion for fresh data.
 
 Issue: API starts but DB calls fail
 - Verify `DATABASE_URL` env inside containers.
