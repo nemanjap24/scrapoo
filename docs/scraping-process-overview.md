@@ -10,7 +10,7 @@ This document describes the current CSFD scraping flow in the FastAPI + Celery +
 - Person enrichment status polling: `GET /api/v1/people/enrich/{task_id}` in `app/api/routes/people.py`
 - Periodic trigger: Celery beat task `tasks.scraping.schedule_default_crawl` in `app/tasks/scraping.py`
 - Scrapy helper process: `python -m app.services.csfd_scraper` in `app/services/csfd_scraper.py`
-- Sitemap parsing helpers: `app/services/sitemap_loader.py` and `scraper/sitemap_collector.py`
+- Sitemap parsing helpers: `app/services/sitemap_loader.py`
 
 ## High-Level Flow
 
@@ -70,6 +70,8 @@ When film URLs are available, the worker splits them into chunks using `SCRAPE_C
 For every chunk task, the worker starts a separate Python helper process. That helper process runs Scrapy. The reason for this extra process is that Scrapy uses Twisted, whose reactor is difficult to restart safely inside a long-running Celery worker. By launching a fresh helper process for each chunk, every crawl gets its own clean Scrapy runtime.
 
 Scrapy then visits each film URL. When it receives a film page, it extracts the main film information: title, original title, year, description, genres, rating, poster URL, country, directors, and actors. Directors and actors are collected from the creator links on the film page.
+
+Current limitation: CSFD may return an anti-bot challenge page instead of film HTML. The scraper detects this response, marks the chunk with `blocked_by_antibot=true`, records `antibot_urls`, and stops the parent scrape job after the blocked wave. When this happens, the API and Celery pipeline are still functioning, but no film data can be extracted because the upstream page is not the expected CSFD detail markup.
 
 For each person found on a film page, the scraper immediately emits a small person record, also called a stub. This means the database can still link films to people without crawling every person detail page. This is the default fast path.
 
@@ -145,9 +147,12 @@ crawl_movies(start_urls, include_people):
     encode crawl settings as base64 JSON
     run "python -m app.services.csfd_scraper --crawl-payload <payload>"
     parse subprocess stdout as JSON
-    return ScrapeBatch(movies, people)
+    return ScrapeBatch(movies, people, blocked_urls, blocked_reason)
 
 CSFDSpider.parse(response):
+    if response is CSFD anti-bot challenge:
+        emit antibot_block payload
+        stop parsing this response
     if URL contains "/film/":
         parse_film(response)
     else if listing URL or listing markup:
@@ -218,38 +223,41 @@ Person persistence:
 2. No request retry/backoff policy is configured in the app layer.
    Sitemap fetches and Scrapy chunks can fail from temporary network errors. Failed crawl chunks are recorded and skipped, but there is no retry queue or automatic reprocessing of failed seeds.
 
-3. Scrapy helper subprocess has no timeout.
+3. CSFD live pages can be unavailable to non-browser crawlers.
+   As of June 2026, CSFD may serve an anti-bot challenge page with a title similar to `Making sure you're not a bot!` instead of film details. The scraper now reports this explicitly with `blocked_by_antibot`, `antibot_urls`, and `antibot_reason`. This should be treated as an upstream access limitation; the app should avoid repeated CSFD scrape attempts while this condition persists.
+
+4. Scrapy helper subprocess has no timeout.
    `subprocess.run(...)` can wait forever if the helper process hangs. A stuck chunk can block a Celery worker slot indefinitely.
 
-4. Sitemap expansion does not normalize film URLs.
-   `expand_sitemaps()` keeps every unique URL containing `/film/`. The older standalone collector has `normalize_film_urls()` to collapse base, season, and episode URLs, but the production sitemap loader does not use that logic. This can create duplicate or overly granular crawls for series/episodes.
+5. Sitemap expansion does not normalize film URLs.
+   `expand_sitemaps()` keeps every unique URL containing `/film/`. It does not currently collapse base, season, and episode URLs. This can create duplicate or overly granular crawls for series/episodes.
 
-5. Sitemap expansion is only one level deep.
+6. Sitemap expansion is only one level deep.
    `resolve_sitemaps()` reads locations from the configured index. `expand_sitemaps()` then expects those selected URLs to contain film page URLs. If a selected URL is itself another sitemap index, the current production flow will not recursively expand it.
 
-6. URL columns are short for real web URLs.
+7. URL columns are short for real web URLs.
    `Film.url`, `Person.url`, and `MovieLink.url` are `CharField(max_length=100)`. CSFD film/person URLs can exceed this. The code expands title column capacity at runtime but does not do the same for URL columns.
 
-7. `Film.update_or_create(url=...)` relies on a non-unique field.
+8. `Film.update_or_create(url=...)` relies on a non-unique field.
    The model does not declare `Film.url` as unique. If duplicate rows already exist or concurrent tasks persist the same URL, update-or-create behavior may be ambiguous or race-prone.
 
-8. A person can have only one role per film.
+9. A person can have only one role per film.
    `PersonInFilm.unique_together = (("films", "persons"),)` prevents storing the same person as both actor and director for the same film. The `role` field is not part of the uniqueness constraint.
 
-9. Person biography is scraped but discarded.
+10. Person biography is scraped but discarded.
    `parse_person()` extracts `bio`, but the current database model has no biography column.
 
-10. Person stubs and full person pages can conflict in role naming.
+11. Person stubs and full person pages can conflict in role naming.
     Film pages emit stubs with role-based occupation. Detail page parsing also emits an occupation based on the callback role. For people appearing in multiple roles across chunks, the last update can overwrite occupation with a single value.
 
-11. Listing pagination has an off-by-one interpretation.
+12. Listing pagination has an off-by-one interpretation.
     In `parse_listing()`, `max_listing_pages=1` still allows the first listing page plus one `next` page because the counter increments after processing the current page. Current sitemap-driven jobs usually pass film detail URLs, so this mainly matters if listing URLs are used later.
 
-12. Partial success is visible but not promoted to task failure.
+13. Partial success is visible but not promoted to task failure.
     A job can return `SUCCESS` even if some chunks failed. The failure is only inside `chunk_details`, so callers must inspect the result payload instead of relying only on Celery state.
 
-13. Fetch fallback can disable SSL verification.
-    `scraper/sitemap_collector.py` retries with an unverified SSL context when normal fetching fails. That is useful for research scripts, but it weakens transport validation if used in production paths through `sitemap_loader`.
+14. Fetch fallback can disable SSL verification.
+    `sitemap_loader.py` retries with an unverified SSL context when normal fetching fails. That can help in research or local environments with certificate issues, but it weakens transport validation in production.
 
 14. API protects sitemap selection, but the Celery task accepts arbitrary sitemap URLs.
     The public API resolves from configured `SITEMAP_INDEX_URL`, but `run_scraping_job` itself accepts any `sitemap_urls` passed to Celery. If an internal caller or exposed broker can enqueue arbitrary jobs, it can fetch unexpected URLs.
@@ -258,7 +266,7 @@ Person persistence:
 
 1. Enable crawl politeness: obey robots where required, set a non-zero request delay, and enable AutoThrottle.
 2. Add a timeout around the scraper subprocess and include failed seeds in task results.
-3. Reuse `normalize_film_urls()` or equivalent logic inside `expand_sitemaps()`.
+3. Add canonical film URL normalization inside `expand_sitemaps()`.
 4. Increase URL column lengths and add unique constraints/indexes for canonical `Film.url` and `Person.url`.
 5. Add a biography field if person biographies are useful enough to keep.
 6. Change `PersonInFilm` uniqueness to include `role` if multiple roles per person/film matter.
@@ -271,10 +279,8 @@ Person persistence:
 - `app/tasks/scraping.py`
 - `app/services/csfd_scraper.py`
 - `app/services/sitemap_loader.py`
-- `scraper/sitemap_collector.py`
 - `app/schemas/scraping.py`
 - `app/core/config.py`
 - `app/core/celery_app.py`
 - `app/models/entities.py`
-- `scraper/test_sitemap_collector.py`
 - `app/tests/test_api_smoke.py`

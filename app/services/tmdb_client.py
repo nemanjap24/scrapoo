@@ -84,7 +84,7 @@ class TMDBClient:
     def fetch_top_movies_with_credits(
         self,
         *,
-        limit: int = 3000,
+        limit: int = 30000,
         language: str = "en-US",
         include_adult: bool = False,
         actor_limit: int | None = None,

@@ -16,6 +16,8 @@ services:
       TMDB_RATE_LIMIT_WINDOW_SECONDS: ${TMDB_RATE_LIMIT_WINDOW_SECONDS:-10}
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      ANALYTICS_CACHE_REDIS_URL: redis://redis:6379/2
+      ANALYTICS_CACHE_TTL_SECONDS: ${ANALYTICS_CACHE_TTL_SECONDS:-3600}
       SCRAPY_SETTINGS_MODULE: crawler.settings
     volumes:
       - ./:/app
@@ -124,7 +126,7 @@ services:
     container_name: scrapoo-dashboard
     environment:
       SCRAPOO_API_URL: http://api:8000/api/v1
-      SCRAPOO_API_TIMEOUT: "30"
+      SCRAPOO_API_TIMEOUT: "120"
     volumes:
       - ./:/app
     ports:

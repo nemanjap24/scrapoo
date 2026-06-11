@@ -31,6 +31,8 @@ class Settings(BaseSettings):
 
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+    ANALYTICS_CACHE_REDIS_URL: str = "redis://localhost:6379/2"
+    ANALYTICS_CACHE_TTL_SECONDS: int = 3600
 
     SCRAPY_SETTINGS_MODULE: str = "crawler.settings"
     BASE_URL: HttpUrl = "https://www.csfd.sk"
