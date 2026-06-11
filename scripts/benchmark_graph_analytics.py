@@ -25,6 +25,10 @@ from app.tasks.scraping import _persist_films
 class BenchmarkResult:
     films_requested: int
     run: int
+    actors_per_film: float
+    directors_per_film: int
+    actor_strategy: str
+    target_people: int | None
     films_saved: int
     people_count: int
     relation_count: int
@@ -66,8 +70,45 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-cast-size",
         type=int,
-        default=10,
+        default=500,
         help="Forwarded to the actor-projection analytics endpoint.",
+    )
+    parser.add_argument(
+        "--actors-per-film",
+        type=int,
+        default=2,
+        help="Number of synthetic actors generated for each film.",
+    )
+    parser.add_argument(
+        "--directors-per-film",
+        type=int,
+        default=1,
+        help="Number of synthetic directors generated for each film.",
+    )
+    parser.add_argument(
+        "--actor-strategy",
+        choices=["chain", "unique", "pool"],
+        default="chain",
+        help=(
+            "Actor generation strategy. 'chain' reuses neighbouring actors, "
+            "'unique' creates new actors for every film, and 'pool' reuses actors "
+            "from a fixed pool."
+        ),
+    )
+    parser.add_argument(
+        "--actor-pool-size",
+        type=int,
+        default=1000,
+        help="Number of actors reused when --actor-strategy=pool.",
+    )
+    parser.add_argument(
+        "--target-people",
+        type=int,
+        default=None,
+        help=(
+            "Optional desired total number of people. Works with "
+            "--actor-strategy=unique by distributing actors across films."
+        ),
     )
     parser.add_argument(
         "--markdown",
@@ -84,6 +125,8 @@ async def main() -> None:
 
     if not sizes:
         raise SystemExit("At least one positive dataset size is required.")
+    if args.target_people is not None and args.actor_strategy != "unique":
+        raise SystemExit("--target-people requires --actor-strategy unique.")
 
     settings.ANALYTICS_CACHE_TTL_SECONDS = 0
     results: list[BenchmarkResult] = []
@@ -95,6 +138,11 @@ async def main() -> None:
                 run=run,
                 database_url=args.database_url,
                 max_cast_size=max(2, args.max_cast_size),
+                actors_per_film=max(1, args.actors_per_film),
+                directors_per_film=max(0, args.directors_per_film),
+                actor_strategy=args.actor_strategy,
+                actor_pool_size=max(1, args.actor_pool_size),
+                target_people=args.target_people,
             )
             results.append(result)
             print_result(result)
@@ -110,11 +158,28 @@ async def run_benchmark(
     run: int,
     database_url: str,
     max_cast_size: int,
+    actors_per_film: int,
+    directors_per_film: int,
+    actor_strategy: str,
+    actor_pool_size: int,
+    target_people: int | None,
 ) -> BenchmarkResult:
     await Tortoise.init(db_url=database_url, modules={"models": settings.TORTOISE_MODELS})
     await Tortoise.generate_schemas()
     try:
-        payloads = generate_movies(films)
+        actor_counts = build_actor_counts(
+            films,
+            actors_per_film=actors_per_film,
+            directors_per_film=directors_per_film,
+            target_people=target_people,
+        )
+        payloads = generate_movies(
+            films,
+            actor_counts=actor_counts,
+            directors_per_film=directors_per_film,
+            actor_strategy=actor_strategy,
+            actor_pool_size=actor_pool_size,
+        )
 
         persist_started = perf_counter()
         films_saved = await _persist_films(payloads)
@@ -136,6 +201,10 @@ async def run_benchmark(
         return BenchmarkResult(
             films_requested=films,
             run=run,
+            actors_per_film=statistics.mean(actor_counts),
+            directors_per_film=directors_per_film,
+            actor_strategy=actor_strategy,
+            target_people=target_people,
             films_saved=films_saved,
             people_count=people_count,
             relation_count=relation_count,
@@ -149,32 +218,110 @@ async def run_benchmark(
         await connections.close_all(discard=True)
 
 
-def generate_movies(count: int) -> list[dict]:
+def generate_movies(
+    count: int,
+    *,
+    actor_counts: list[int],
+    directors_per_film: int,
+    actor_strategy: str,
+    actor_pool_size: int,
+) -> list[dict]:
+    movies: list[dict] = []
+    actor_offset = 0
+    for index in range(count):
+        actors_per_film = actor_counts[index]
+        movies.append(
+            {
+                "title": f"Benchmark film {index}",
+                "year": 2000 + (index % 25),
+                "rating": round(0.5 + ((index % 50) / 100), 2),
+                "actors": generate_actor_slugs(
+                    index,
+                    actors_per_film=actors_per_film,
+                    actor_strategy=actor_strategy,
+                    actor_pool_size=actor_pool_size,
+                    actor_offset=actor_offset,
+                ),
+                "directors": [
+                    f"{200000000 + (index * max(1, directors_per_film)) + director_index}"
+                    f"-benchmark-director-{index}-{director_index}"
+                    for director_index in range(directors_per_film)
+                ],
+                "genres": ["Drama" if index % 2 == 0 else "Thriller"],
+                "country": "Slovensko" if index % 2 == 0 else "Cesko",
+                "csfd_url": f"https://www.csfd.sk/film/{300000 + index}-benchmark-film-{index}/prehlad/",
+            }
+        )
+        actor_offset += actors_per_film
+    return movies
+
+
+def build_actor_counts(
+    films: int,
+    *,
+    actors_per_film: int,
+    directors_per_film: int,
+    target_people: int | None,
+) -> list[int]:
+    if target_people is None:
+        return [actors_per_film for _ in range(films)]
+
+    director_total = films * directors_per_film
+    actor_total = target_people - director_total
+    if actor_total < films:
+        raise SystemExit(
+            "--target-people is too low for the selected film and director counts; "
+            "at least one actor per film is required."
+        )
+    base_count, extra_count = divmod(actor_total, films)
     return [
-        {
-            "title": f"Benchmark film {index}",
-            "year": 2000 + (index % 25),
-            "rating": round(0.5 + ((index % 50) / 100), 2),
-            "actors": [
-                f"{100000 + index}-benchmark-actor-{index}",
-                f"{100001 + index}-benchmark-actor-{index + 1}",
-            ],
-            "directors": [f"{200000 + index}-benchmark-director-{index}"],
-            "genres": ["Drama" if index % 2 == 0 else "Thriller"],
-            "country": "Slovensko" if index % 2 == 0 else "Cesko",
-            "csfd_url": f"https://www.csfd.sk/film/{300000 + index}-benchmark-film-{index}/prehlad/",
-        }
-        for index in range(count)
+        base_count + (1 if index < extra_count else 0)
+        for index in range(films)
+    ]
+
+
+def generate_actor_slugs(
+    film_index: int,
+    *,
+    actors_per_film: int,
+    actor_strategy: str,
+    actor_pool_size: int,
+    actor_offset: int,
+) -> list[str]:
+    if actor_strategy == "unique":
+        actor_ids = [
+            100000000 + actor_offset + actor_index
+            for actor_index in range(actors_per_film)
+        ]
+    elif actor_strategy == "pool":
+        actor_ids = [
+            100000000 + ((film_index * actors_per_film) + actor_index) % actor_pool_size
+            for actor_index in range(actors_per_film)
+        ]
+    else:
+        actor_ids = [
+            100000000 + film_index + actor_index
+            for actor_index in range(actors_per_film)
+        ]
+    return [
+        f"{actor_id}-benchmark-actor-{actor_id}"
+        for actor_id in actor_ids
     ]
 
 
 def print_result(result: BenchmarkResult) -> None:
     print(
-        "size={films} run={run} films_saved={saved} people={people} relations={relations} "
+        "size={films} run={run} avg_actors_per_film={actors:.2f} directors_per_film={directors} "
+        "actor_strategy={strategy} target_people={target} films_saved={saved} "
+        "people={people} relations={relations} "
         "nodes={nodes} edges={edges} persist={persist:.4f}s analysis={analysis:.4f}s "
         "films_per_second={rate:.2f}".format(
             films=result.films_requested,
             run=result.run,
+            actors=result.actors_per_film,
+            directors=result.directors_per_film,
+            strategy=result.actor_strategy,
+            target=result.target_people or "",
             saved=result.films_saved,
             people=result.people_count,
             relations=result.relation_count,
@@ -188,14 +335,24 @@ def print_result(result: BenchmarkResult) -> None:
 
 
 def print_markdown_summary(results: list[BenchmarkResult]) -> None:
-    print("| Films | Runs | Avg persist (s) | Avg analysis (s) | Avg films/s | Avg nodes | Avg edges |")
-    print("|---:|---:|---:|---:|---:|---:|---:|")
+    print(
+        "| Films | Runs | Avg actors/film | Directors/film | Strategy | Target people | Avg people | Avg relations | "
+        "Avg persist (s) | Avg analysis (s) | Avg films/s | Avg nodes | Avg edges |"
+    )
+    print("|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for size in sorted({result.films_requested for result in results}):
         group = [result for result in results if result.films_requested == size]
         print(
-            "| {films} | {runs} | {persist:.4f} | {analysis:.4f} | {rate:.2f} | {nodes:.1f} | {edges:.1f} |".format(
+            "| {films} | {runs} | {actors:.2f} | {directors} | {strategy} | {target} | {people:.1f} | {relations:.1f} | "
+            "{persist:.4f} | {analysis:.4f} | {rate:.2f} | {nodes:.1f} | {edges:.1f} |".format(
                 films=size,
                 runs=len(group),
+                actors=group[0].actors_per_film,
+                directors=group[0].directors_per_film,
+                strategy=group[0].actor_strategy,
+                target=group[0].target_people or "",
+                people=statistics.mean(result.people_count for result in group),
+                relations=statistics.mean(result.relation_count for result in group),
                 persist=statistics.mean(result.persist_seconds for result in group),
                 analysis=statistics.mean(result.analysis_seconds for result in group),
                 rate=statistics.mean(result.films_per_second for result in group),
