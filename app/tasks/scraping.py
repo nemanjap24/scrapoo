@@ -97,6 +97,9 @@ def run_scraping_job(
                 "chunk_details": [],
                 "failed_seed_count": 0,
                 "failed_seed_urls": [],
+                "blocked_by_antibot": False,
+                "antibot_urls": [],
+                "antibot_reason": None,
                 "duration_seconds": _elapsed_seconds(started_at),
                 "films_per_second": 0.0,
             }
@@ -112,6 +115,8 @@ def run_scraping_job(
         )
     )
     failed_seed_urls = _collect_failed_seed_urls(chunk_details)
+    antibot_urls = _collect_antibot_urls(chunk_details)
+    blocked_by_antibot = bool(antibot_urls)
     if failed_seed_urls:
         logger.warning(
             "CSFD scrape completed with %s failed or missing seed URLs: %s",
@@ -120,6 +125,8 @@ def run_scraping_job(
         )
     else:
         logger.info("CSFD scrape completed without failed or missing seed URLs")
+    if blocked_by_antibot:
+        logger.warning("CSFD scrape stopped after anti-bot challenge from %s", antibot_urls[:10])
 
     base_response.update(
         {
@@ -129,6 +136,9 @@ def run_scraping_job(
             "chunk_details": chunk_details,
             "failed_seed_count": len(failed_seed_urls),
             "failed_seed_urls": failed_seed_urls,
+            "blocked_by_antibot": blocked_by_antibot,
+            "antibot_urls": antibot_urls,
+            "antibot_reason": "CSFD returned an anti-bot challenge page." if blocked_by_antibot else None,
             "duration_seconds": _elapsed_seconds(started_at),
             "films_per_second": _rate(saved_movies, started_at),
         }
@@ -259,6 +269,19 @@ def scrape_movie_chunk(
     meta["status"] = "crawled"
     meta["films_crawled"] = len(batch.movies)
     meta["people_crawled"] = len(batch.people)
+    if batch.blocked_urls:
+        meta["status"] = "blocked"
+        meta["blocked_by_antibot"] = True
+        meta["antibot_urls"] = batch.blocked_urls
+        meta["antibot_reason"] = batch.blocked_reason or "CSFD returned an anti-bot challenge page."
+        meta["failed_seed_urls"] = seeds
+        meta["crawl_duration_seconds"] = _elapsed_seconds(started_at)
+        meta["crawl_films_per_second"] = 0.0
+        return {
+            "meta": meta,
+            "movies": [],
+            "people": [],
+        }
     crawled_urls = _canonical_url_set(
         payload.get("csfd_url") or payload.get("url")
         for payload in batch.movies
@@ -292,9 +315,12 @@ async def _execute_scrape_pipeline(
     total_films = 0
     total_people = 0
     chunk_details: list[dict] = []
+    stop_after_wave = False
     try:
         chunks = list(enumerate(_chunked(film_seeds, chunk_size), start=1))
         for wave in _chunked(chunks, parallel_chunks):
+            if stop_after_wave:
+                break
             wave_started_at = time.monotonic()
             logger.info("Dispatching %s scrape chunks in parallel", len(wave))
             chunk_group = group(
@@ -310,6 +336,10 @@ async def _execute_scrape_pipeline(
                 chunk_started_at = time.monotonic()
                 if meta.get("status") == "failed":
                     chunk_details.append(meta)
+                    continue
+                if meta.get("status") == "blocked" or meta.get("blocked_by_antibot"):
+                    chunk_details.append(meta)
+                    stop_after_wave = True
                     continue
 
                 meta["status"] = "persisting"
@@ -751,6 +781,19 @@ def _collect_failed_seed_urls(chunk_details: Iterable[dict]) -> list[str]:
             failed_urls.append(cleaned)
             seen.add(cleaned)
     return failed_urls
+
+
+def _collect_antibot_urls(chunk_details: Iterable[dict]) -> list[str]:
+    blocked_urls: list[str] = []
+    seen: set[str] = set()
+    for detail in chunk_details:
+        for url in detail.get("antibot_urls") or []:
+            cleaned = str(url or "").strip()
+            if not cleaned or cleaned in seen:
+                continue
+            blocked_urls.append(cleaned)
+            seen.add(cleaned)
+    return blocked_urls
 
 
 def _canonical_url_set(urls: Iterable[object]) -> set[str]:

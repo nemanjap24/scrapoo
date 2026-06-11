@@ -24,23 +24,37 @@ from app.core.config import settings
 class ScrapeBatch:
     movies: List[Dict]
     people: List[Dict]
+    blocked_urls: List[str] = field(default_factory=list)
+    blocked_reason: Optional[str] = None
 
 
 @dataclass
 class _Collector:
     movies: List[Dict] = field(default_factory=list)
     people: List[Dict] = field(default_factory=list)
+    blocked_urls: List[str] = field(default_factory=list)
+    blocked_reason: Optional[str] = None
 
     def __call__(self, item: Dict) -> None:
         payload = dict(item)
         item_type = payload.pop("item_type", "movie")
         if item_type == "person":
             self.people.append(payload)
+        elif item_type == "antibot_block":
+            url = (payload.get("url") or "").strip()
+            if url and url not in self.blocked_urls:
+                self.blocked_urls.append(url)
+            self.blocked_reason = payload.get("reason") or "CSFD returned an anti-bot challenge page."
         else:
             self.movies.append(payload)
 
     def build(self) -> ScrapeBatch:
-        return ScrapeBatch(movies=self.movies[:], people=self.people[:])
+        return ScrapeBatch(
+            movies=self.movies[:],
+            people=self.people[:],
+            blocked_urls=self.blocked_urls[:],
+            blocked_reason=self.blocked_reason,
+        )
 
 
 class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery integration tests
@@ -65,6 +79,10 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
         self._emitted_people: set[str] = set()
 
     def parse(self, response: scrapy.http.Response):  # type: ignore[override]
+        if self._is_antibot_response(response):
+            self._emit_antibot_block(response)
+            return
+
         url = response.url
         if "/tvorca/" in url or "/tvurce/" in url:
             yield from self.parse_person(response)
@@ -96,6 +114,10 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
             yield response.follow(next_href, callback=self.parse_listing)
 
     def parse_film(self, response: scrapy.http.Response):
+        if self._is_antibot_response(response):
+            self._emit_antibot_block(response)
+            return
+
         csfd_id = self._extract_csfd_id(response.url)
         if not csfd_id or csfd_id in self._seen_movies:
             return
@@ -174,6 +196,10 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
         fallback_slug: str | None = None,
         role: str | None = None,
     ):
+        if self._is_antibot_response(response):
+            self._emit_antibot_block(response)
+            return
+
         csfd_id = fallback_slug or self._extract_person_id(response.url)
         name = (response.css("h1::text").get() or "").strip()
         birth_date = (response.css("div.birth-date::text").get() or "").strip()
@@ -198,6 +224,23 @@ class CSFDSpider(scrapy.Spider):  # pragma: no cover - exercised via Celery inte
             self.item_callback(dict(payload))
         except Exception:  # pragma: no cover - defensive
             self.logger.exception("item_callback failed")
+
+    def _emit_antibot_block(self, response: scrapy.http.Response) -> None:
+        self._emit(
+            {
+                "item_type": "antibot_block",
+                "url": response.url,
+                "reason": "CSFD returned an anti-bot challenge page.",
+            }
+        )
+
+    @staticmethod
+    def _is_antibot_response(response: scrapy.http.Response) -> bool:
+        title = (response.css("title::text").get() or "").strip().lower()
+        if "making sure you're not a bot" in title:
+            return True
+        body = response.text.lower()
+        return "anubis" in body and "not a bot" in body
 
     @staticmethod
     def _extract_csfd_id(url: str) -> Optional[str]:
@@ -430,7 +473,12 @@ def crawl_movies(
         parsed = json.loads(completed.stdout or "{}")
     except json.JSONDecodeError as exc:  # pragma: no cover - defensive
         raise RuntimeError(f"Failed to parse scraper output: {exc}\nRaw: {completed.stdout}") from exc
-    return ScrapeBatch(movies=parsed.get("movies", []), people=parsed.get("people", []))
+    return ScrapeBatch(
+        movies=parsed.get("movies", []),
+        people=parsed.get("people", []),
+        blocked_urls=parsed.get("blocked_urls", []),
+        blocked_reason=parsed.get("blocked_reason"),
+    )
 
 
 def crawl_people(
@@ -457,6 +505,7 @@ def _build_spider_settings(download_delay: float) -> Dict:
         "USER_AGENT": "ScrapooCrawler/1.0 (+https://github.com/nemanjap24/scrapoo)",
         "ROBOTSTXT_OBEY": False,
         "AUTOTHROTTLE_ENABLED": False,
+        "HTTPERROR_ALLOW_ALL": True,
     }
 
 
@@ -485,7 +534,16 @@ def _cli_entry() -> int:
     payload_json = base64.b64decode(args.crawl_payload.encode("ascii"))
     payload = json.loads(payload_json)
     batch = _execute_crawl(payload)
-    sys.stdout.write(json.dumps({"movies": batch.movies, "people": batch.people}))
+    sys.stdout.write(
+        json.dumps(
+            {
+                "movies": batch.movies,
+                "people": batch.people,
+                "blocked_urls": batch.blocked_urls,
+                "blocked_reason": batch.blocked_reason,
+            }
+        )
+    )
     return 0
 
 
