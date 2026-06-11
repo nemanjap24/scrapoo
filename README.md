@@ -2,8 +2,6 @@
 
 [![FastAPI Stack Tests](https://github.com/nemanjap24/scrapoo/actions/workflows/fastapi-tests.yml/badge.svg)](https://github.com/nemanjap24/scrapoo/actions/workflows/fastapi-tests.yml)
 
-Standalone script/module to collect URLs from robots.txt -> sitemaps -> nested sitemaps.
-
 ## FastAPI + Scrapy stack (WIP)
 
 The project is migrating to a FastAPI + Scrapy + Celery architecture. To run the local stack
