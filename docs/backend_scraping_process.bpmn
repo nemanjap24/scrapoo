@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Definitions_Backend_Scraping_Process" targetNamespace="https://scrapoo.local/bpmn/backend-scraping" exporter="Camunda Modeler" exporterVersion="5.47.0">
-  <bpmn:process id="Process_Backend_Scraping" name="Backend scraping process" isExecutable="false">
+  <bpmn:process id="Process_Backend_Scraping" name="Backendový proces zberu údajov" isExecutable="false">
     <bpmn:documentation>
-      Backend BPMN process for CSFD scraping. The process follows the real application flow:
-      FastAPI receives the scraping request, resolves sitemap URLs, enqueues a Celery task,
-      the worker expands film URLs, runs Scrapy chunks, persists data through Tortoise ORM,
-      and exposes the final task status.
+      Backendový BPMN proces pre zber údajov z ČSFD. Proces sleduje skutočný tok aplikácie:
+      FastAPI prijme požiadavku na zber údajov, vyrieši URL adresy máp stránok, zaradí úlohu Celery do frontu,
+      worker na pozadí rozbalí URL adresy filmov, spustí dávky Scrapy, uloží údaje cez Tortoise ORM
+      a sprístupní konečný stav úlohy.
     </bpmn:documentation>
     <bpmn:laneSet id="LaneSet_Backend_Scraping">
       <bpmn:lane id="Lane_Persistence" name="Persistence layer">
@@ -17,9 +17,10 @@
         <bpmn:flowNodeRef>Task_Expand_Film_Urls</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_Skip_Existing</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_Filter_Existing</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_Create_Chunks</bpmn:flowNodeRef>
-        <bpmn:flowNodeRef>Task_Crawl_Chunks</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_Collect_Results</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Crawl_Chunks</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Create_Chunks</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_1y6lyrq</bpmn:flowNodeRef>
       </bpmn:lane>
       <bpmn:lane id="Lane_Queue" name="Task queue">
         <bpmn:flowNodeRef>Task_Deliver_Task</bpmn:flowNodeRef>
@@ -27,7 +28,7 @@
         <bpmn:flowNodeRef>Task_Enqueue_Celery</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Gateway_0ocreo2</bpmn:flowNodeRef>
       </bpmn:lane>
-      <bpmn:lane id="Lane_API" name="API service">
+      <bpmn:lane id="Lane_API" name="API služba">
         <bpmn:flowNodeRef>Task_Validate_Request</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_Resolve_Sitemaps</bpmn:flowNodeRef>
         <bpmn:flowNodeRef>Task_Return_Error</bpmn:flowNodeRef>
@@ -41,95 +42,93 @@
     <bpmn:startEvent id="Start_Scrape_Request" name="POST /movies/scrape">
       <bpmn:outgoing>Flow_1</bpmn:outgoing>
     </bpmn:startEvent>
-    <bpmn:serviceTask id="Task_Validate_Request" name="Validate scraping parameters">
+    <bpmn:serviceTask id="Task_Validate_Request" name="Validovať parametre zberu údajov">
       <bpmn:incoming>Flow_1</bpmn:incoming>
       <bpmn:outgoing>Flow_2</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:serviceTask id="Task_Resolve_Sitemaps" name="Resolve selected CSFD sitemaps">
+    <bpmn:serviceTask id="Task_Resolve_Sitemaps" name="Vyhľadať vybrané mapy stránok ČSFD">
       <bpmn:incoming>Flow_2</bpmn:incoming>
       <bpmn:outgoing>Flow_3</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:exclusiveGateway id="Gateway_Sitemaps_Found" name="Sitemaps found?">
+    <bpmn:exclusiveGateway id="Gateway_Sitemaps_Found" name="Mapy stránok nájdené?">
       <bpmn:incoming>Flow_3</bpmn:incoming>
       <bpmn:outgoing>Flow_4a</bpmn:outgoing>
       <bpmn:outgoing>Flow_4b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
-    <bpmn:serviceTask id="Task_Return_Error" name="Return 404/502 error">
+    <bpmn:serviceTask id="Task_Return_Error" name="Vrátiť chybu 404/502">
       <bpmn:incoming>Flow_4b</bpmn:incoming>
       <bpmn:outgoing>Flow_5b</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:endEvent id="End_Request_Rejected" name="Request rejected">
+    <bpmn:endEvent id="End_Request_Rejected" name="Požiadavka zamietnutá">
       <bpmn:incoming>Flow_5b</bpmn:incoming>
     </bpmn:endEvent>
-    <bpmn:serviceTask id="Task_Enqueue_Celery" name="Enqueue scraping job">
+    <bpmn:serviceTask id="Task_Enqueue_Celery" name="Zaradiť úlohu zberu údajov do frontu">
       <bpmn:incoming>Flow_4a</bpmn:incoming>
       <bpmn:outgoing>Flow_0v9t1jd</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:serviceTask id="Task_Return_Task_Id" name="Return accepted response with task id">
+    <bpmn:serviceTask id="Task_Return_Task_Id" name="Vrátiť prijatú odpoveď s ID úlohy">
       <bpmn:incoming>Flow_0bnqrih</bpmn:incoming>
       <bpmn:outgoing>Flow_6a</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:endEvent id="End_Request_Accepted" name="HTTP request accepted">
+    <bpmn:endEvent id="End_Request_Accepted" name="HTTP požiadavka prijatá">
       <bpmn:incoming>Flow_6a</bpmn:incoming>
     </bpmn:endEvent>
-    <bpmn:serviceTask id="Task_Store_Queued_Task" name="Store task in Redis broker">
+    <bpmn:serviceTask id="Task_Store_Queued_Task" name="Uložiť úlohu v sprostredkovateľovi Redis">
       <bpmn:incoming>Flow_1717vq2</bpmn:incoming>
       <bpmn:outgoing>Flow_6_queue</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:serviceTask id="Task_Deliver_Task" name="Deliver task to worker">
+    <bpmn:serviceTask id="Task_Deliver_Task" name="Doručiť úlohu workeru">
       <bpmn:incoming>Flow_6_queue</bpmn:incoming>
       <bpmn:outgoing>Flow_7</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:serviceTask id="Task_Expand_Film_Urls" name="Expand sitemaps into film URLs">
+    <bpmn:serviceTask id="Task_Expand_Film_Urls" name="Rozbaliť mapy stránok na URL filmov">
       <bpmn:incoming>Flow_7</bpmn:incoming>
       <bpmn:outgoing>Flow_8</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:exclusiveGateway id="Gateway_Skip_Existing" name="Skip existing films?">
+    <bpmn:exclusiveGateway id="Gateway_Skip_Existing" name="Preskočiť existujúce filmy?">
       <bpmn:incoming>Flow_8</bpmn:incoming>
       <bpmn:outgoing>Flow_9a</bpmn:outgoing>
       <bpmn:outgoing>Flow_9b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
-    <bpmn:serviceTask id="Task_Filter_Existing" name="Filter URLs already stored">
+    <bpmn:serviceTask id="Task_Filter_Existing" name="Filtrovať už uložené URL adresy">
       <bpmn:incoming>Flow_9a</bpmn:incoming>
-      <bpmn:outgoing>Flow_10a</bpmn:outgoing>
+      <bpmn:outgoing>Flow_052ambf</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:serviceTask id="Task_Create_Chunks" name="Split film URLs into chunks">
-      <bpmn:incoming>Flow_10a</bpmn:incoming>
-      <bpmn:incoming>Flow_9b</bpmn:incoming>
+    <bpmn:serviceTask id="Task_Create_Chunks" name="Rozdeliť URL filmov na dávky">
+      <bpmn:incoming>Flow_1el5msz</bpmn:incoming>
       <bpmn:outgoing>Flow_11</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:serviceTask id="Task_Crawl_Chunks" name="Run Scrapy crawling chunks">
+    <bpmn:serviceTask id="Task_Crawl_Chunks" name="Spustiť dávky Scrapy">
       <bpmn:incoming>Flow_11</bpmn:incoming>
       <bpmn:outgoing>Flow_12</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:serviceTask id="Task_Collect_Results" name="Collect crawled movies and people">
+    <bpmn:serviceTask id="Task_Collect_Results" name="Zozbierať získané filmy a osoby">
       <bpmn:incoming>Flow_12</bpmn:incoming>
       <bpmn:outgoing>Flow_13</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:serviceTask id="Task_Persist_Data" name="Persist films, people and relationships">
+    <bpmn:serviceTask id="Task_Persist_Data" name="Uložiť filmy, osoby a vzťahy">
       <bpmn:incoming>Flow_13</bpmn:incoming>
       <bpmn:outgoing>Flow_14</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:serviceTask id="Task_Update_Status" name="Update Celery result payload">
+    <bpmn:serviceTask id="Task_Update_Status" name="Aktualizovať výsledok úlohy Celery">
       <bpmn:incoming>Flow_14</bpmn:incoming>
       <bpmn:outgoing>Flow_15</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:endEvent id="End_Scraping_Completed" name="Scraping job completed">
+    <bpmn:endEvent id="End_Scraping_Completed" name="Úloha zberu údajov dokončená">
       <bpmn:incoming>Flow_15</bpmn:incoming>
     </bpmn:endEvent>
     <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_Scrape_Request" targetRef="Task_Validate_Request" />
     <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_Validate_Request" targetRef="Task_Resolve_Sitemaps" />
     <bpmn:sequenceFlow id="Flow_3" sourceRef="Task_Resolve_Sitemaps" targetRef="Gateway_Sitemaps_Found" />
-    <bpmn:sequenceFlow id="Flow_4a" name="yes" sourceRef="Gateway_Sitemaps_Found" targetRef="Task_Enqueue_Celery" />
-    <bpmn:sequenceFlow id="Flow_4b" name="no" sourceRef="Gateway_Sitemaps_Found" targetRef="Task_Return_Error" />
+    <bpmn:sequenceFlow id="Flow_4a" name="áno" sourceRef="Gateway_Sitemaps_Found" targetRef="Task_Enqueue_Celery" />
+    <bpmn:sequenceFlow id="Flow_4b" name="nie" sourceRef="Gateway_Sitemaps_Found" targetRef="Task_Return_Error" />
     <bpmn:sequenceFlow id="Flow_5b" sourceRef="Task_Return_Error" targetRef="End_Request_Rejected" />
     <bpmn:sequenceFlow id="Flow_6a" sourceRef="Task_Return_Task_Id" targetRef="End_Request_Accepted" />
     <bpmn:sequenceFlow id="Flow_6_queue" sourceRef="Task_Store_Queued_Task" targetRef="Task_Deliver_Task" />
     <bpmn:sequenceFlow id="Flow_7" sourceRef="Task_Deliver_Task" targetRef="Task_Expand_Film_Urls" />
     <bpmn:sequenceFlow id="Flow_8" sourceRef="Task_Expand_Film_Urls" targetRef="Gateway_Skip_Existing" />
-    <bpmn:sequenceFlow id="Flow_9a" name="yes" sourceRef="Gateway_Skip_Existing" targetRef="Task_Filter_Existing" />
-    <bpmn:sequenceFlow id="Flow_9b" name="no" sourceRef="Gateway_Skip_Existing" targetRef="Task_Create_Chunks" />
-    <bpmn:sequenceFlow id="Flow_10a" sourceRef="Task_Filter_Existing" targetRef="Task_Create_Chunks" />
+    <bpmn:sequenceFlow id="Flow_9a" name="áno" sourceRef="Gateway_Skip_Existing" targetRef="Task_Filter_Existing" />
+    <bpmn:sequenceFlow id="Flow_9b" name="nie" sourceRef="Gateway_Skip_Existing" targetRef="Gateway_1y6lyrq" />
     <bpmn:sequenceFlow id="Flow_11" sourceRef="Task_Create_Chunks" targetRef="Task_Crawl_Chunks" />
     <bpmn:sequenceFlow id="Flow_12" sourceRef="Task_Crawl_Chunks" targetRef="Task_Collect_Results" />
     <bpmn:sequenceFlow id="Flow_13" sourceRef="Task_Collect_Results" targetRef="Task_Persist_Data" />
@@ -143,8 +142,15 @@
     <bpmn:sequenceFlow id="Flow_1717vq2" sourceRef="Gateway_0ocreo2" targetRef="Task_Store_Queued_Task" />
     <bpmn:sequenceFlow id="Flow_0v9t1jd" sourceRef="Task_Enqueue_Celery" targetRef="Gateway_0ocreo2" />
     <bpmn:sequenceFlow id="Flow_0bnqrih" sourceRef="Gateway_0ocreo2" targetRef="Task_Return_Task_Id" />
+    <bpmn:exclusiveGateway id="Gateway_1y6lyrq">
+      <bpmn:incoming>Flow_052ambf</bpmn:incoming>
+      <bpmn:incoming>Flow_9b</bpmn:incoming>
+      <bpmn:outgoing>Flow_1el5msz</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_052ambf" sourceRef="Task_Filter_Existing" targetRef="Gateway_1y6lyrq" />
+    <bpmn:sequenceFlow id="Flow_1el5msz" sourceRef="Gateway_1y6lyrq" targetRef="Task_Create_Chunks" />
   </bpmn:process>
-  <bpmndi:BPMNDiagram id="Diagram_Backend_Scraping" name="Backend scraping process">
+  <bpmndi:BPMNDiagram id="Diagram_Backend_Scraping" name="Backendový proces zberu údajov">
     <bpmndi:BPMNPlane id="Plane_Backend_Scraping" bpmnElement="Process_Backend_Scraping">
       <bpmndi:BPMNShape id="Shape_Lane_API" bpmnElement="Lane_API" isHorizontal="true">
         <dc:Bounds x="160" y="60" width="1460" height="150" />
@@ -189,6 +195,9 @@
           <dc:Bounds x="866" y="153" width="84" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_Enqueue_Celery" bpmnElement="Task_Enqueue_Celery">
+        <dc:Bounds x="815" y="245" width="130" height="70" />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Shape_Task_Return_Task_Id" bpmnElement="Task_Return_Task_Id">
         <dc:Bounds x="1115" y="95" width="150" height="80" />
       </bpmndi:BPMNShape>
@@ -210,20 +219,11 @@
       <bpmndi:BPMNShape id="Shape_Gateway_Skip_Existing" bpmnElement="Gateway_Skip_Existing" isMarkerVisible="true">
         <dc:Bounds x="375" y="380" width="50" height="50" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="369" y="430" width="62" height="27" />
+          <dc:Bounds x="359" y="342.5" width="81" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Shape_Task_Filter_Existing" bpmnElement="Task_Filter_Existing">
         <dc:Bounds x="470" y="365" width="130" height="80" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Shape_Task_Create_Chunks" bpmnElement="Task_Create_Chunks">
-        <dc:Bounds x="645" y="365" width="130" height="80" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Shape_Task_Crawl_Chunks" bpmnElement="Task_Crawl_Chunks">
-        <dc:Bounds x="820" y="365" width="130" height="80" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Shape_Task_Collect_Results" bpmnElement="Task_Collect_Results">
-        <dc:Bounds x="995" y="365" width="130" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Shape_Task_Persist_Data" bpmnElement="Task_Persist_Data">
         <dc:Bounds x="1170" y="505" width="130" height="70" />
@@ -237,11 +237,20 @@
           <dc:Bounds x="1507" y="558" width="62" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Shape_Task_Enqueue_Celery" bpmnElement="Task_Enqueue_Celery">
-        <dc:Bounds x="815" y="245" width="130" height="70" />
-      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Gateway_09szmda_di" bpmnElement="Gateway_0ocreo2">
         <dc:Bounds x="995" y="255" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_Collect_Results" bpmnElement="Task_Collect_Results">
+        <dc:Bounds x="1145" y="365" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_Crawl_Chunks" bpmnElement="Task_Crawl_Chunks">
+        <dc:Bounds x="945" y="365" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_Create_Chunks" bpmnElement="Task_Create_Chunks">
+        <dc:Bounds x="765" y="365" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_1y6lyrq_di" bpmnElement="Gateway_1y6lyrq" isMarkerVisible="true">
+        <dc:Bounds x="665" y="380" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="Edge_Flow_1" bpmnElement="Flow_1">
         <di:waypoint x="236" y="135" />
@@ -301,28 +310,25 @@
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Edge_Flow_9b" bpmnElement="Flow_9b">
         <di:waypoint x="400" y="430" />
-        <di:waypoint x="400" y="462" />
-        <di:waypoint x="710" y="462" />
-        <di:waypoint x="710" y="445" />
+        <di:waypoint x="400" y="470" />
+        <di:waypoint x="690" y="470" />
+        <di:waypoint x="690" y="430" />
         <bpmndi:BPMNLabel>
-          <dc:Bounds x="549" y="443" width="13" height="14" />
+          <dc:Bounds x="538" y="451" width="15" height="14" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Edge_Flow_10a" bpmnElement="Flow_10a">
-        <di:waypoint x="600" y="405" />
-        <di:waypoint x="645" y="405" />
-      </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Edge_Flow_11" bpmnElement="Flow_11">
-        <di:waypoint x="775" y="405" />
-        <di:waypoint x="820" y="405" />
+        <di:waypoint x="895" y="405" />
+        <di:waypoint x="945" y="405" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Edge_Flow_12" bpmnElement="Flow_12">
-        <di:waypoint x="950" y="405" />
-        <di:waypoint x="995" y="405" />
+        <di:waypoint x="1075" y="405" />
+        <di:waypoint x="1145" y="405" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Edge_Flow_13" bpmnElement="Flow_13">
-        <di:waypoint x="1125" y="405" />
-        <di:waypoint x="1235" y="405" />
+        <di:waypoint x="1210" y="445" />
+        <di:waypoint x="1210" y="475" />
+        <di:waypoint x="1235" y="475" />
         <di:waypoint x="1235" y="505" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Edge_Flow_14" bpmnElement="Flow_14">
@@ -345,6 +351,14 @@
         <di:waypoint x="1020" y="255" />
         <di:waypoint x="1020" y="135" />
         <di:waypoint x="1115" y="135" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_052ambf_di" bpmnElement="Flow_052ambf">
+        <di:waypoint x="600" y="405" />
+        <di:waypoint x="665" y="405" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1el5msz_di" bpmnElement="Flow_1el5msz">
+        <di:waypoint x="715" y="405" />
+        <di:waypoint x="765" y="405" />
       </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>

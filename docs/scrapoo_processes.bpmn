@@ -59,7 +59,7 @@
     <bpmn:sequenceFlow id="Flow_184e3ke" sourceRef="Gateway_1f8jy38" targetRef="Analytics_Prepare_Response" />
     <bpmn:dataStoreReference id="DataStoreReference_1f7wipv" />
     <bpmn:textAnnotation id="TextAnnotation_1w4lwrk">
-      <bpmn:text>doplnit</bpmn:text>
+      <bpmn:text>Databáza scrapoo_db</bpmn:text>
     </bpmn:textAnnotation>
     <bpmn:association id="Association_0p9ovbm" associationDirection="None" sourceRef="DataStoreReference_1f7wipv" targetRef="TextAnnotation_1w4lwrk" />
   </bpmn:process>
@@ -226,11 +226,11 @@
       <bpmndi:BPMNShape id="Shape_Analytics_Compute_Graph" bpmnElement="Analytics_Compute_Graph">
         <dc:Bounds x="1010" y="190" width="150" height="80" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="BPMNShape_15y8olg" bpmnElement="Gateway_1f8jy38" isMarkerVisible="true">
-        <dc:Bounds x="1205" y="283" width="50" height="50" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="1188" y="343" width="84" height="27" />
-        </bpmndi:BPMNLabel>
+      <bpmndi:BPMNShape id="Shape_Analytics_Prepare_Response" bpmnElement="Analytics_Prepare_Response">
+        <dc:Bounds x="1345" y="260" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Analytics_Render_Dashboard" bpmnElement="Analytics_Render_Dashboard">
+        <dc:Bounds x="1545" y="268" width="150" height="80" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Shape_Analytics_End" bpmnElement="Analytics_End">
         <dc:Bounds x="1782" y="290" width="36" height="36" />
@@ -238,18 +238,22 @@
           <dc:Bounds x="1758" y="326" width="85" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Shape_Analytics_Render_Dashboard" bpmnElement="Analytics_Render_Dashboard">
-        <dc:Bounds x="1545" y="268" width="150" height="80" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Shape_Analytics_Prepare_Response" bpmnElement="Analytics_Prepare_Response">
-        <dc:Bounds x="1345" y="260" width="150" height="80" />
+      <bpmndi:BPMNShape id="BPMNShape_15y8olg" bpmnElement="Gateway_1f8jy38" isMarkerVisible="true">
+        <dc:Bounds x="1205" y="283" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1188" y="343" width="84" height="27" />
+        </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="DataStoreReference_1f7wipv_di" bpmnElement="DataStoreReference_1f7wipv">
-        <dc:Bounds x="715" y="165" width="50" height="50" />
+        <dc:Bounds x="615" y="165" width="50" height="50" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNEdge id="Association_0p9ovbm_di" bpmnElement="Association_0p9ovbm">
-        <di:waypoint x="761" y="165" />
-        <di:waypoint x="807" y="110" />
+        <di:waypoint x="643" y="165" />
+        <di:waypoint x="647" y="130" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="DataOutputAssociation_0li294k_di" bpmnElement="DataOutputAssociation_0li294k">
+        <di:waypoint x="709" y="268" />
+        <di:waypoint x="662" y="215" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Edge_Flow_Analytics_1" bpmnElement="Flow_Analytics_1">
         <di:waypoint x="216" y="308" />
@@ -287,11 +291,11 @@
         <di:waypoint x="1230" y="230" />
         <di:waypoint x="1230" y="283" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_184e3ke_di" bpmnElement="Flow_184e3ke">
-        <di:waypoint x="1255" y="308" />
-        <di:waypoint x="1300" y="308" />
-        <di:waypoint x="1300" y="300" />
-        <di:waypoint x="1345" y="300" />
+      <bpmndi:BPMNEdge id="Edge_Flow_Analytics_7" bpmnElement="Flow_Analytics_7">
+        <di:waypoint x="1495" y="300" />
+        <di:waypoint x="1520" y="300" />
+        <di:waypoint x="1520" y="308" />
+        <di:waypoint x="1545" y="308" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Edge_Flow_Analytics_8" bpmnElement="Flow_Analytics_8">
         <di:waypoint x="1620" y="268" />
@@ -299,20 +303,16 @@
         <di:waypoint x="1800" y="248" />
         <di:waypoint x="1800" y="290" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Edge_Flow_Analytics_7" bpmnElement="Flow_Analytics_7">
-        <di:waypoint x="1495" y="300" />
-        <di:waypoint x="1520" y="300" />
-        <di:waypoint x="1520" y="308" />
-        <di:waypoint x="1545" y="308" />
+      <bpmndi:BPMNEdge id="Flow_184e3ke_di" bpmnElement="Flow_184e3ke">
+        <di:waypoint x="1255" y="308" />
+        <di:waypoint x="1300" y="308" />
+        <di:waypoint x="1300" y="300" />
+        <di:waypoint x="1345" y="300" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNShape id="TextAnnotation_1w4lwrk_di" bpmnElement="TextAnnotation_1w4lwrk">
-        <dc:Bounds x="770" y="80" width="99.99656781987919" height="29.99725425590335" />
+        <dc:Bounds x="600" y="89" width="100" height="41" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNEdge id="DataOutputAssociation_0li294k_di" bpmnElement="DataOutputAssociation_0li294k">
-        <di:waypoint x="743" y="268" />
-        <di:waypoint x="741" y="215" />
-      </bpmndi:BPMNEdge>
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
   <bpmndi:BPMNDiagram id="Diagram_CSFD_Scraping" name="Ziskavanie dat z CSFD">

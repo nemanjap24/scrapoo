@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import httpx
@@ -28,11 +29,63 @@ def fetch_json(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, 
         return response.json()
 
 
+def post_json(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    url = f"{API_BASE_URL}{path}"
+    with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+        response = client.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+
+def fetch_uncached_json(path: str) -> Dict[str, Any]:
+    url = f"{API_BASE_URL}{path}"
+    with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+        response = client.get(url)
+        response.raise_for_status()
+        return response.json()
+
+
 def with_source(params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     selected = st.session_state.get("data_source", "csfd")
     merged = dict(params or {})
     merged["source"] = selected
     return merged
+
+
+def _scrape_jobs() -> list[Dict[str, Any]]:
+    return st.session_state.setdefault("scrape_jobs", [])
+
+
+def _remember_scrape_job(source: str, response: Dict[str, Any], payload: Dict[str, Any]) -> None:
+    jobs = _scrape_jobs()
+    task_id = response["task_id"]
+    jobs[:] = [job for job in jobs if job["task_id"] != task_id]
+    jobs.insert(
+        0,
+        {
+            "source": source,
+            "task_id": task_id,
+            "queued_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "payload": payload,
+        },
+    )
+    del jobs[10:]
+
+
+def _status_path(source: str, task_id: str) -> str:
+    if source == "tmdb":
+        return f"/movies/tmdb/scrape/{task_id}"
+    return f"/movies/scrape/{task_id}"
+
+
+def _state_badge(state: str, ready: bool, successful: bool) -> str:
+    if successful:
+        return "complete"
+    if ready:
+        return "failed"
+    if state in {"STARTED", "RETRY", "PROGRESS"}:
+        return "running"
+    return state.lower()
 
 
 def render_overview() -> None:
@@ -48,6 +101,196 @@ def render_overview() -> None:
     st.subheader("Prolific Countries")
     fig = px.bar(data["prolific_countries"], x="name", y="film_count", title="Films by Country")
     st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_csfd_scrape_form() -> None:
+    with st.form("csfd_scrape_form"):
+        cols = st.columns(3)
+        from_page = cols[0].number_input("From sitemap page", min_value=1, value=1, step=1)
+        max_pages = cols[1].number_input("Sitemap pages", min_value=1, max_value=250, value=1, step=1)
+        limit_films = cols[2].checkbox("Limit films", value=True)
+        max_films = None
+        if limit_films:
+            max_films = st.number_input("Film limit", min_value=1, max_value=10000, value=100, step=50)
+        option_cols = st.columns(3)
+        include_people = option_cols[0].checkbox("Crawl person pages", value=False)
+        include_movies = option_cols[1].checkbox("Crawl movies", value=True)
+        skip_existing = option_cols[2].checkbox("Skip existing", value=True)
+        submitted = st.form_submit_button("Start CSFD scrape", type="primary")
+
+    if not submitted:
+        return
+
+    payload: Dict[str, Any] = {
+        "from_page": int(from_page),
+        "max_pages": int(max_pages),
+        "include_people": include_people,
+        "include_movies": include_movies,
+        "skip_existing": skip_existing,
+    }
+    if max_films is not None:
+        payload["max_films"] = int(max_films)
+    try:
+        response = post_json("/movies/scrape", payload)
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        st.error(f"CSFD scrape was not queued: {detail}")
+        return
+    except httpx.HTTPError as exc:
+        st.error(f"CSFD scrape was not queued: {exc}")
+        return
+
+    _remember_scrape_job("csfd", response, payload)
+    fetch_json.clear()
+    st.success(f"Queued CSFD task {response['task_id']}")
+
+
+def _render_tmdb_scrape_form() -> None:
+    with st.form("tmdb_scrape_form"):
+        cols = st.columns(3)
+        limit = cols[0].number_input("Movie limit", min_value=1, max_value=30000, value=100, step=100)
+        language = cols[1].text_input("Language", value="en-US", max_chars=10)
+        include_adult = cols[2].checkbox("Include adult", value=False)
+        limit_actors = st.checkbox("Limit actors per movie", value=False)
+        actor_limit = None
+        if limit_actors:
+            actor_limit = st.number_input("Actor limit", min_value=1, max_value=1000, value=20, step=5)
+        submitted = st.form_submit_button("Start TMDB ingestion", type="primary")
+
+    if not submitted:
+        return
+
+    payload: Dict[str, Any] = {
+        "limit": int(limit),
+        "language": language.strip() or "en-US",
+        "include_adult": include_adult,
+    }
+    if actor_limit is not None:
+        payload["actor_limit"] = int(actor_limit)
+    try:
+        response = post_json("/movies/tmdb/scrape", payload)
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        st.error(f"TMDB ingestion was not queued: {detail}")
+        return
+    except httpx.HTTPError as exc:
+        st.error(f"TMDB ingestion was not queued: {exc}")
+        return
+
+    _remember_scrape_job("tmdb", response, payload)
+    fetch_json.clear()
+    st.success(f"Queued TMDB task {response['task_id']}")
+
+
+def _render_task_result(source: str, status: Dict[str, Any]) -> None:
+    result = status.get("result") or {}
+    if not result:
+        return
+
+    if source == "tmdb":
+        cols = st.columns(4)
+        cols[0].metric("Films Saved", f"{result.get('films_saved', 0):,}")
+        cols[1].metric("People Saved", f"{result.get('people_saved', 0):,}")
+        cols[2].metric("Movies Failed", f"{result.get('movies_failed', 0):,}")
+        cols[3].metric("Duration", f"{float(result.get('duration_seconds', 0.0)):.1f}s")
+    else:
+        cols = st.columns(4)
+        cols[0].metric("Films Saved", f"{result.get('films_saved', 0):,}")
+        cols[1].metric("People Collected", f"{result.get('people_collected', 0):,}")
+        cols[2].metric("Chunks", f"{result.get('chunks_processed', 0):,}")
+        cols[3].metric("Duration", f"{float(result.get('duration_seconds', 0.0)):.1f}s")
+        if result.get("blocked_by_antibot"):
+            st.warning(result.get("antibot_reason") or "CSFD returned an anti-bot challenge page.")
+
+    with st.expander("Task result JSON"):
+        st.json(result)
+
+
+def _render_status_lookup() -> None:
+    with st.form("scrape_status_lookup"):
+        cols = st.columns([1, 3])
+        source_label = cols[0].selectbox("Task source", tuple(DATA_SOURCES), key="status_source")
+        task_id = cols[1].text_input("Task ID")
+        submitted = st.form_submit_button("Track task")
+
+    if not submitted:
+        return
+    normalized_task_id = task_id.strip()
+    if not normalized_task_id:
+        st.warning("Task ID is required.")
+        return
+    source = DATA_SOURCES[source_label]
+    _remember_scrape_job(source, {"task_id": normalized_task_id}, {"tracked_manually": True})
+
+
+def _render_tracked_jobs() -> None:
+    jobs = _scrape_jobs()
+    if not jobs:
+        st.info("No scraping jobs tracked in this dashboard session.")
+        return
+
+    if st.button("Refresh statuses"):
+        st.rerun()
+
+    status_rows = []
+    statuses: Dict[str, Dict[str, Any]] = {}
+    for job in jobs:
+        task_id = job["task_id"]
+        source = job["source"]
+        try:
+            status = fetch_uncached_json(_status_path(source, task_id))
+        except httpx.HTTPError as exc:
+            status = {
+                "task_id": task_id,
+                "state": "ERROR",
+                "ready": True,
+                "successful": False,
+                "error": str(exc),
+            }
+        statuses[task_id] = status
+        status_rows.append(
+            {
+                "queued_at": job["queued_at"],
+                "source": source.upper(),
+                "task_id": task_id,
+                "state": status.get("state"),
+                "status": _state_badge(
+                    str(status.get("state", "")),
+                    bool(status.get("ready")),
+                    bool(status.get("successful")),
+                ),
+            }
+        )
+
+    st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=True)
+    selected_task = st.selectbox("Task details", [job["task_id"] for job in jobs])
+    selected_job = next(job for job in jobs if job["task_id"] == selected_task)
+    selected_status = statuses[selected_task]
+    cols = st.columns(4)
+    cols[0].metric("Source", selected_job["source"].upper())
+    cols[1].metric("State", selected_status.get("state", "UNKNOWN"))
+    cols[2].metric("Ready", "yes" if selected_status.get("ready") else "no")
+    cols[3].metric("Successful", "yes" if selected_status.get("successful") else "no")
+    if selected_status.get("error"):
+        st.error(selected_status["error"])
+    with st.expander("Submitted payload"):
+        st.json(selected_job["payload"])
+    _render_task_result(selected_job["source"], selected_status)
+
+
+def render_scraping() -> None:
+    st.subheader("Start Scraping")
+    source_label = st.radio("Source", tuple(DATA_SOURCES), horizontal=True, key="scrape_source")
+    source = DATA_SOURCES[source_label]
+    if source == "tmdb":
+        _render_tmdb_scrape_form()
+    else:
+        _render_csfd_scrape_form()
+
+    st.divider()
+    st.subheader("Job Status")
+    _render_status_lookup()
+    _render_tracked_jobs()
 
 
 def render_people() -> None:
@@ -398,6 +641,7 @@ def main() -> None:
             "Releases",
             "Network",
             "Graph Analysis",
+            "Scraping",
         ),
     )
     if section == "Overview":
@@ -410,8 +654,10 @@ def main() -> None:
         render_releases()
     elif section == "Network":
         render_network()
-    else:
+    elif section == "Graph Analysis":
         render_graph_analysis()
+    else:
+        render_scraping()
 
 
 if __name__ == "__main__":

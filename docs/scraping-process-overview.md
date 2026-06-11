@@ -10,7 +10,7 @@ This document describes the current CSFD scraping flow in the FastAPI + Celery +
 - Person enrichment status polling: `GET /api/v1/people/enrich/{task_id}` in `app/api/routes/people.py`
 - Periodic trigger: Celery beat task `tasks.scraping.schedule_default_crawl` in `app/tasks/scraping.py`
 - Scrapy helper process: `python -m app.services.csfd_scraper` in `app/services/csfd_scraper.py`
-- Sitemap parsing helpers: `app/services/sitemap_loader.py` and `scraper/sitemap_collector.py`
+- Sitemap parsing helpers: `app/services/sitemap_loader.py`
 
 ## High-Level Flow
 
@@ -230,7 +230,7 @@ Person persistence:
    `subprocess.run(...)` can wait forever if the helper process hangs. A stuck chunk can block a Celery worker slot indefinitely.
 
 5. Sitemap expansion does not normalize film URLs.
-   `expand_sitemaps()` keeps every unique URL containing `/film/`. The older standalone collector has `normalize_film_urls()` to collapse base, season, and episode URLs, but the production sitemap loader does not use that logic. This can create duplicate or overly granular crawls for series/episodes.
+   `expand_sitemaps()` keeps every unique URL containing `/film/`. It does not currently collapse base, season, and episode URLs. This can create duplicate or overly granular crawls for series/episodes.
 
 6. Sitemap expansion is only one level deep.
    `resolve_sitemaps()` reads locations from the configured index. `expand_sitemaps()` then expects those selected URLs to contain film page URLs. If a selected URL is itself another sitemap index, the current production flow will not recursively expand it.
@@ -257,7 +257,7 @@ Person persistence:
     A job can return `SUCCESS` even if some chunks failed. The failure is only inside `chunk_details`, so callers must inspect the result payload instead of relying only on Celery state.
 
 14. Fetch fallback can disable SSL verification.
-    `scraper/sitemap_collector.py` retries with an unverified SSL context when normal fetching fails. That is useful for research scripts, but it weakens transport validation if used in production paths through `sitemap_loader`.
+    `sitemap_loader.py` retries with an unverified SSL context when normal fetching fails. That can help in research or local environments with certificate issues, but it weakens transport validation in production.
 
 14. API protects sitemap selection, but the Celery task accepts arbitrary sitemap URLs.
     The public API resolves from configured `SITEMAP_INDEX_URL`, but `run_scraping_job` itself accepts any `sitemap_urls` passed to Celery. If an internal caller or exposed broker can enqueue arbitrary jobs, it can fetch unexpected URLs.
@@ -266,7 +266,7 @@ Person persistence:
 
 1. Enable crawl politeness: obey robots where required, set a non-zero request delay, and enable AutoThrottle.
 2. Add a timeout around the scraper subprocess and include failed seeds in task results.
-3. Reuse `normalize_film_urls()` or equivalent logic inside `expand_sitemaps()`.
+3. Add canonical film URL normalization inside `expand_sitemaps()`.
 4. Increase URL column lengths and add unique constraints/indexes for canonical `Film.url` and `Person.url`.
 5. Add a biography field if person biographies are useful enough to keep.
 6. Change `PersonInFilm` uniqueness to include `role` if multiple roles per person/film matter.
@@ -279,10 +279,8 @@ Person persistence:
 - `app/tasks/scraping.py`
 - `app/services/csfd_scraper.py`
 - `app/services/sitemap_loader.py`
-- `scraper/sitemap_collector.py`
 - `app/schemas/scraping.py`
 - `app/core/config.py`
 - `app/core/celery_app.py`
 - `app/models/entities.py`
-- `scraper/test_sitemap_collector.py`
 - `app/tests/test_api_smoke.py`

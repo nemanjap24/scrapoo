@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import gzip
+import io
+import ssl
+import xml.etree.ElementTree as ET
 from typing import List, Sequence
+from urllib.request import urlopen
 
 from app.core.config import settings
-from scraper.sitemap_collector import decompress_gzip, extract_locs_from_xml, fetch_bytes, is_gzip_bytes
 
 
 class SitemapResolutionError(RuntimeError):
@@ -66,12 +70,12 @@ def _slice_sitemaps(all_sitemaps: Sequence[str], from_page: int | None, max_page
 
 def _fetch_bytes(url: str) -> bytes:
     try:
-        payload = fetch_bytes(url)
+        payload = _download_bytes(url)
     except Exception as exc:  # pragma: no cover - network errors hit at runtime
         raise SitemapResolutionError(f"Failed to fetch {url}: {exc}") from exc
-    if is_gzip_bytes(payload):
+    if _is_gzip_bytes(payload):
         try:
-            payload = decompress_gzip(payload)
+            payload = gzip.decompress(payload)
         except Exception as exc:  # pragma: no cover
             raise SitemapResolutionError(f"Failed to decompress {url}: {exc}") from exc
     return payload
@@ -79,6 +83,51 @@ def _fetch_bytes(url: str) -> bytes:
 
 def _extract_locs(xml_bytes: bytes) -> List[str]:
     try:
-        return extract_locs_from_xml(xml_bytes)
+        return _extract_locs_from_xml(xml_bytes)
     except Exception as exc:  # pragma: no cover
         raise SitemapResolutionError(f"Failed to parse sitemap XML: {exc}") from exc
+
+
+def _download_bytes(url: str, timeout: int = 30) -> bytes:
+    try:
+        with urlopen(url, timeout=timeout) as response:
+            return response.read()
+    except Exception:
+        context = ssl._create_unverified_context()
+        with urlopen(url, timeout=timeout, context=context) as response:
+            return response.read()
+
+
+def _extract_locs_from_xml(xml_bytes: bytes) -> List[str]:
+    try:
+        text = xml_bytes.decode("utf-8")
+    except Exception:
+        try:
+            text = xml_bytes.decode("latin-1")
+        except Exception:
+            text = xml_bytes.decode(errors="ignore")
+
+    iterator = ET.iterparse(io.StringIO(text))
+    for _, element in iterator:
+        if "}" in element.tag:
+            element.tag = element.tag.split("}", 1)[1]
+    root = iterator.root
+
+    if root.tag == "sitemapindex":
+        return [
+            loc.text.strip()
+            for sitemap in root.findall("sitemap")
+            for loc in [sitemap.find("loc")]
+            if loc is not None and loc.text
+        ]
+
+    return [
+        loc.text.strip()
+        for url in root.findall("url")
+        for loc in [url.find("loc")]
+        if loc is not None and loc.text
+    ]
+
+
+def _is_gzip_bytes(payload: bytes) -> bool:
+    return len(payload) >= 2 and payload[0] == 0x1F and payload[1] == 0x8B
