@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -61,6 +62,45 @@ class TestApiSmoke(unittest.TestCase):
             self.assertEqual(payload.get("state"), "PENDING")
             self.assertFalse(payload.get("ready"))
             self.assertFalse(payload.get("successful"))
+
+    def test_create_duplicate_film_returns_conflict(self) -> None:
+        unique_url = f"https://example.test/film/{uuid4()}/"
+        payload = {
+            "title": "API konflikt test",
+            "release_year": 2026,
+            "url": unique_url,
+        }
+
+        with TestClient(app) as client:
+            first_response = client.post("/api/v1/movies/", json=payload)
+            self.assertEqual(first_response.status_code, 200)
+
+            duplicate_response = client.post("/api/v1/movies/", json=payload)
+            self.assertEqual(duplicate_response.status_code, 409)
+            self.assertEqual(duplicate_response.json().get("detail"), "Film already exists")
+
+    def test_get_unknown_person_returns_not_found(self) -> None:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/people/999999999")
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.json().get("detail"), "Person not found")
+
+    def test_scrape_request_validation_rejects_out_of_range_values(self) -> None:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/movies/scrape",
+                json={
+                    "from_page": 0,
+                    "max_pages": 251,
+                    "max_films": 10001,
+                },
+            )
+            self.assertEqual(response.status_code, 422)
+
+    def test_analytics_source_validation_rejects_unknown_source(self) -> None:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/analytics/overview", params={"source": "unknown"})
+            self.assertEqual(response.status_code, 422)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from time import perf_counter
 
 from scrapy.http import HtmlResponse, Request
 from tortoise import Tortoise, connections
@@ -199,6 +200,140 @@ class TestFunctionalRequirementsE2E(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.core.max_core_number, 2)
         self.assertEqual({edge.weight for edge in response.graph_edges}, {1})
         self.assertEqual({node.value for node in response.graph_nodes}, {2.0})
+
+    async def test_04_parser_and_persistence_accept_missing_optional_values(self) -> None:
+        collected: list[dict] = []
+        spider = CSFDSpider(
+            start_urls=["https://www.csfd.sk/film/400-neuplny-film/prehlad/"],
+            item_callback=lambda item: collected.append(dict(item)),
+        )
+        html = """
+        <html>
+          <body>
+            <h1>Neuplny film</h1>
+            <div class="origin">Neznama krajina</div>
+            <div class="creators">
+              <div>
+                <h4>Hrajú:</h4>
+                <a href="/tvorca/401-minimalny-herec/prehlad/">Minimalny Herec</a>
+              </div>
+            </div>
+          </body>
+        </html>
+        """
+
+        list(spider.parse_film(_film_response("https://www.csfd.sk/film/400-neuplny-film/prehlad/", html)))
+        movie_payloads = [item for item in collected if item.get("item_type") == "movie"]
+
+        self.assertEqual(len(movie_payloads), 1)
+        self.assertIsNone(movie_payloads[0].get("rating"))
+        self.assertIn("401-minimalny-herec", movie_payloads[0].get("actors", []))
+
+        await _persist_films(movie_payloads)
+        film = await Film.get(title="Neuplny film").prefetch_related("person_in_films__persons")
+
+        self.assertIsNone(film.release_year)
+        self.assertIsNone(film.rating)
+        self.assertEqual(len(film.person_in_films), 1)
+        self.assertEqual(film.person_in_films[0].role, "actor")
+
+    async def test_05_empty_actor_projection_returns_zero_metrics(self) -> None:
+        response = await analytics_actor_projection(
+            max_diameter_nodes=10,
+            max_cast_size=10,
+            top_core_actors=10,
+            min_core_actor_degree=1,
+            source="csfd",
+        )
+
+        self.assertEqual(response.movie_count, 0)
+        self.assertEqual(response.stats.node_count, 0)
+        self.assertEqual(response.stats.edge_count, 0)
+        self.assertEqual(response.largest_component_count, 0)
+        self.assertEqual(response.path.diameter, None)
+        self.assertEqual(response.core.max_core_number, 0)
+        self.assertEqual(response.graph_nodes, [])
+        self.assertEqual(response.graph_edges, [])
+
+    async def test_06_actor_projection_line_graph_metrics(self) -> None:
+        await _persist_films(
+            [
+                {
+                    "title": "Retazovy film 1",
+                    "year": 2020,
+                    "actors": ["501-anna-retaz", "502-boris-retaz"],
+                    "directors": [],
+                    "genres": ["Drama"],
+                    "country": "Slovensko",
+                    "csfd_url": "https://www.csfd.sk/film/501-retazovy-film-1/prehlad/",
+                },
+                {
+                    "title": "Retazovy film 2",
+                    "year": 2021,
+                    "actors": ["502-boris-retaz", "503-cyril-retaz"],
+                    "directors": [],
+                    "genres": ["Drama"],
+                    "country": "Slovensko",
+                    "csfd_url": "https://www.csfd.sk/film/502-retazovy-film-2/prehlad/",
+                },
+            ]
+        )
+
+        response = await analytics_actor_projection(
+            max_diameter_nodes=10,
+            max_cast_size=10,
+            top_core_actors=10,
+            min_core_actor_degree=1,
+            source="csfd",
+        )
+
+        self.assertEqual(response.movie_count, 2)
+        self.assertEqual(response.stats.node_count, 3)
+        self.assertEqual(response.stats.edge_count, 2)
+        self.assertAlmostEqual(response.stats.density, 2 / 3)
+        self.assertAlmostEqual(response.stats.average_degree, 4 / 3)
+        self.assertEqual(response.largest_component_count, 3)
+        self.assertEqual(response.path.diameter, 2)
+        self.assertAlmostEqual(response.clustering.average_clustering, 0.0)
+        self.assertEqual(response.core.max_core_number, 1)
+
+    async def test_07_persistence_and_graph_analysis_performance_smoke(self) -> None:
+        movie_payloads = [
+            {
+                "title": f"Vykonovy film {index}",
+                "year": 2000 + index,
+                "actors": [
+                    f"{700 + index}-vykonovy-herec-{index}",
+                    f"{701 + index}-vykonovy-herec-{index + 1}",
+                ],
+                "directors": [f"{900 + index}-vykonovy-reziser-{index}"],
+                "genres": ["Drama"],
+                "country": "Slovensko",
+                "csfd_url": f"https://www.csfd.sk/film/{700 + index}-vykonovy-film-{index}/prehlad/",
+            }
+            for index in range(20)
+        ]
+
+        persist_started = perf_counter()
+        films_saved = await _persist_films(movie_payloads)
+        persist_elapsed = perf_counter() - persist_started
+
+        analysis_started = perf_counter()
+        response = await analytics_actor_projection(
+            max_diameter_nodes=50,
+            max_cast_size=10,
+            top_core_actors=10,
+            min_core_actor_degree=1,
+            source="csfd",
+        )
+        analysis_elapsed = perf_counter() - analysis_started
+
+        self.assertEqual(films_saved, 20)
+        self.assertGreaterEqual(persist_elapsed, 0)
+        self.assertGreaterEqual(analysis_elapsed, 0)
+        self.assertEqual(response.movie_count, 20)
+        self.assertEqual(response.stats.node_count, 21)
+        self.assertEqual(response.stats.edge_count, 20)
 
 
 if __name__ == "__main__":
