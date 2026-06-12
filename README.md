@@ -2,241 +2,169 @@
 
 [![FastAPI Stack Tests](https://github.com/nemanjap24/scrapoo/actions/workflows/fastapi-tests.yml/badge.svg)](https://github.com/nemanjap24/scrapoo/actions/workflows/fastapi-tests.yml)
 
-## FastAPI + Scrapy stack (WIP)
+Scrapoo is a FastAPI, Scrapy, Celery and Streamlit application for collecting film data, storing it in PostgreSQL, and analysing actor collaboration graphs. It supports two separated data sources:
 
-The project is migrating to a FastAPI + Scrapy + Celery architecture. To run the local stack
-with Docker Compose (API, Celery worker, Celery beat scheduler, PostgreSQL, Redis, Streamlit dashboard):
+- CSFD data in the main `scrapoo` database.
+- TMDB data in the separate `scrapoo_tmdb` database.
+
+The same analytics API and dashboard can be used for both sources through the `source=csfd|tmdb` parameter.
+
+## Run Locally
 
 ```bash
 docker compose up --build
 ```
 
-- API: http://localhost:8000 (FastAPI docs at `/docs`).
-- PostgreSQL: exposed on port 5432 (default credentials in `docker-compose.yml`).
-- TMDB PostgreSQL: exposed on port 5433, backed by a separate `scrapoo_tmdb` database for future TMDB ingestion.
-- Redis: exposed on port 6379 for Celery broker/result backend.
-- Dashboard: http://localhost:8501 (Streamlit UI powered by the analytics endpoints).
-- Celery beat: schedules periodic crawl tasks according to `SCRAPE_SCHEDULE_*` env vars.
+Services:
 
-Set custom secrets via `.env` or override the compose environment variables before running.
+- API: <http://localhost:8000> with FastAPI docs at `/docs`
+- Dashboard: <http://localhost:8501>
+- PostgreSQL: `localhost:5432`
+- TMDB PostgreSQL: `localhost:5433`
+- Redis: `localhost:6379`
+- Celery worker and Celery beat for background jobs
 
-The current CSFD ingestion and API continue to use `DATABASE_URL`. New TMDB-specific jobs can use
-`TMDB_DATABASE_URL` so imported TMDB movies and people stay isolated from the existing CSFD dataset.
+Optional TMDB configuration can be provided through `.env`:
 
-To enable TMDB ingestion, provide either `TMDB_API_KEY` or `TMDB_ACCESS_TOKEN` in your environment or `.env`.
-TMDB requests are throttled by default to `TMDB_REQUESTS_PER_WINDOW=40` per
-`TMDB_RATE_LIMIT_WINDOW_SECONDS=10`, and that limiter is used only for TMDB API calls.
+```env
+TMDB_API_KEY=
+TMDB_ACCESS_TOKEN=
+```
 
-### Triggering Scrapy crawls
+TMDB requests are rate-limited by `TMDB_REQUESTS_PER_WINDOW` and `TMDB_RATE_LIMIT_WINDOW_SECONDS`.
 
-Once the stack is up, you can enqueue CSFD crawls directly from the API:
+## Dashboard
+
+The Streamlit dashboard runs at <http://localhost:8501>. It contains:
+
+- `Overview`: collection totals, top actors/directors, prolific countries
+- `People`: role-based person statistics
+- `Countries`: film share by production country
+- `Releases`: release distribution by year or decade
+- `Graph Analysis`: actor projection graph analysis
+- `Scraping`: CSFD/TMDB job submission and job status tracking
+
+`Graph Analysis` is the main analytical view. It shows:
+
+- core actor network sample
+- Leiden communities and modularity
+- clustering and transitivity
+- average shortest path in the largest connected component
+- k-core structure and top core actors
+
+The dashboard hides empty analytics gracefully. If the selected source has no films, it shows:
+
+```text
+Databáza je prázdna a nemáme žiadne filmy.
+```
+
+For standalone dashboard use:
+
+```bash
+pip install -r requirements.txt
+SCRAPOO_API_URL=http://localhost:8000/api/v1 streamlit run dashboard/streamlit_app.py
+```
+
+## API
+
+### Health
+
+- `GET /api/v1/health/`
+
+### Movies
+
+- `GET /api/v1/movies?limit=50`
+- `POST /api/v1/movies`
+- `POST /api/v1/movies/scrape`
+- `GET /api/v1/movies/scrape/{task_id}`
+- `POST /api/v1/movies/tmdb/scrape`
+- `GET /api/v1/movies/tmdb/scrape/{task_id}`
+
+CSFD scrape example:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/movies/scrape \
-	-H "Content-Type: application/json" \
-	-d '{
-			"from_page": 1,
-			"max_pages": 1,
-			"max_films": 1000,
-			"include_people": false,
-			"include_movies": true,
-			"skip_existing": false
-		}'
+  -H "Content-Type: application/json" \
+  -d '{
+    "from_page": 1,
+    "max_pages": 1,
+    "max_films": 1000,
+    "skip_existing": true
+  }'
 ```
 
-### Triggering TMDB ingestion
-
-TMDB ingestion imports up to the top 30000 movies by TMDB popularity into the separate `scrapoo_tmdb` database.
-Each movie is fetched with appended credits so actors and directors are persisted with the film.
+TMDB import example:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/movies/tmdb/scrape \
-	-H "Content-Type: application/json" \
-	-d '{
-			"limit": 30000,
-			"language": "en-US",
-			"include_adult": false
-		}'
+  -H "Content-Type: application/json" \
+  -d '{
+    "limit": 1000,
+    "language": "en-US"
+  }'
 ```
 
-Poll TMDB ingestion state via:
+### People
 
-- `GET /api/v1/movies/tmdb/scrape/{task_id}`
-
-The completed task result includes `movies_failed` and `failed_movies`. When TMDB cannot fetch an individual
-movie detail page, ingestion continues and the failed TMDB id, title, URL, and error are reported there. CSFD scrape
-results similarly include `failed_seed_count` and `failed_seed_urls` for chunks whose input URLs did not produce a
-movie payload.
-
-The endpoint now resolves CSFD sitemap files from `https://static.pmgstatic.com/sitemaps/www.csfd.sk/sitemap.xml`,
-queues the selected sitemap URLs, and lets the Celery worker expand them into individual film pages. The worker
-then crawls each film via Scrapy and persists the results in PostgreSQL. Film pages still capture linked person
-stubs for actors/directors, while full person detail crawling is handled by a separate enrichment job.
-
-Available POST body options:
-
-- `from_page` _(int, optional)_ – 1-based sitemap index to start at. Skip earlier sitemaps by setting this to >1.
-- `max_pages` _(int, optional)_ – number of sitemap files to process after `from_page`. Hard capped at 250.
-- `max_films` _(int, optional)_ – stops the crawl once this many film detail pages have been visited, even if there
-  are still sitemaps left in the window.
-- `include_people` _(bool, default false)_ – keep false for fast film collection. When true, every discovered
-  actor/director also gets a dedicated person crawl during the film scrape.
-- `include_movies` _(bool, default true)_ – future-proof flag for creator-only runs. Leave true unless you
-  deliberately want to ignore film URLs.
-- `skip_existing` _(bool, default false)_ – when true, the worker filters out film URLs that already exist in
-  `film.url` before crawling. Useful for repeated sitemap runs.
-
-After enqueueing a scrape, poll task state via:
-
-- `GET /api/v1/movies/scrape/{task_id}`
-  - Returns Celery state (`PENDING`, `STARTED`, `SUCCESS`, `FAILURE`), completion flags, and task result/error payload.
-  - Successful scrape results include timing fields such as `duration_seconds`, `films_per_second`, and per-chunk
-    `duration_seconds`/`films_per_second` values.
-
-### Periodic scheduling (Gate 7)
-
-- Periodic crawl orchestration is handled by Celery beat via task `tasks.scraping.schedule_default_crawl`.
-- Scheduler interval and crawl scope are controlled via environment variables:
-  - `SCRAPE_SCHEDULE_MINUTES` (set `0` to disable scheduling)
-  - `SCRAPE_SCHEDULE_FROM_PAGE`
-  - `SCRAPE_SCHEDULE_MAX_PAGES`
-  - `SCRAPE_SCHEDULE_MAX_FILMS`
-  - `SCRAPE_SCHEDULE_INCLUDE_PEOPLE`
-  - `SCRAPE_SCHEDULE_INCLUDE_MOVIES`
-  - `SCRAPE_PARALLEL_CHUNKS` (default `4`; number of scrape chunks dispatched in parallel waves)
-- Monitor scheduler activity with:
-
-```bash
-docker compose logs --tail=200 beat
-docker compose logs --tail=200 worker
-```
-
-#### Slow person enrichment
-
-After a fast film scrape has created person stubs, enqueue person detail enrichment separately:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/people/enrich \
-	-H "Content-Type: application/json" \
-	-d '{
-			"limit": 500,
-			"only_missing_birth_date": true
-		}'
-```
-
-Poll enrichment state via:
-
+- `GET /api/v1/people?limit=50`
+- `GET /api/v1/people/{person_id}`
+- `POST /api/v1/people/enrich`
 - `GET /api/v1/people/enrich/{task_id}`
 
-The enrichment task selects existing people from PostgreSQL, crawls their CSFD detail pages, and updates fields that
-the current schema can store, such as `birth_date`. Successful enrichment results include `duration_seconds`,
-`people_per_second`, and per-chunk timing values.
+### Analytics
 
-#### Worker internals (important when toggling `include_people`)
+All analytics endpoints accept `source=csfd` or `source=tmdb`.
 
-- Every scrape job shells out to `python -m app.services.csfd_scraper`. That helper process spins up Twisted's
-  reactor, runs the Scrapy spider, and prints the collected payloads as JSON. Because a brand-new process is used
-  per job, Celery never attempts to restart a reactor inside its own worker pool, eliminating the
-  `twisted.internet.error.ReactorNotRestartable` crashes. When the helper exits with a non-zero code, the API task
-  surfaces its stdout/stderr for quick diagnosis.
-- Films always emit creator/person stubs inline, regardless of the `include_people` flag. Those stubs give us
-  director/actor slugs, names, and URLs directly from the film page so we can persist relationships quickly.
-- Setting `include_people=true` additionally queues each encountered person for a dedicated detail-page crawl during
-  the film scrape. Prefer the separate `/people/enrich` endpoint when you want fast film ingestion first and slower
-  person details later.
-- Crawls stream seeds in configurable batches so long-running jobs stay predictable. Adjust `SCRAPE_CHUNK_SIZE`
-  (default 200) to control how many film URLs each helper process tackles before persistence runs.
-- Scrape chunks are dispatched to Celery in parallel waves controlled by `SCRAPE_PARALLEL_CHUNKS` (default 4).
-  The compose default worker concurrency is 5 so the parent scrape task can wait while 4 child chunk tasks run.
+- `GET /api/v1/analytics/overview?source=csfd&limit=10`
+- `GET /api/v1/analytics/people?source=csfd&roles=actor&roles=director&limit=10&min_films=1`
+- `GET /api/v1/analytics/countries?source=csfd&limit=10`
+- `GET /api/v1/analytics/releases?source=csfd&bucket=decade&limit=12`
+- `GET /api/v1/analytics/network/actor-projection?source=csfd&max_diameter_nodes=1000&max_cast_size=30`
 
-### Core data endpoints (current response shape)
+The actor projection endpoint builds a graph where vertices are actors and an edge means that two actors appeared in at least one shared film. The default dashboard settings keep the graph practical and interpretable:
 
-- `GET /api/v1/movies?limit=1`
-  - Returns film records aligned with the Tortoise `Film` model.
-  - Genres are represented as a many-to-many list in `genres`.
-  - There is no singular `genre`/`genre_id` field in this API shape.
+- `max_cast_size=30` limits very large casts so one movie does not create an oversized clique.
+- `max_diameter_nodes=1000` switches large shortest-path calculations to sampling.
+- `top_core_actors=25` limits the displayed core actor sample.
+- `min_core_actor_degree=1` filters low-degree actors from the core actor table.
 
-Example response item:
+## Background Jobs
 
-```json
-{
-  "id": 57,
-  "title": "Hana a jej sestry",
-  "original_title": "Hannah and Her Sisters",
-  "country_id": 6,
-  "language": "Unknown",
-  "release_year": 1986,
-  "rating": null,
-  "num_votes": null,
-  "url": "https://www.csfd.sk/film/38-hana-a-jej-sestry/prehlad/",
-  "country": { "id": 6, "name": "USA" },
-  "genres": [],
-  "directors": [],
-  "actors": []
-}
+Celery worker processes long-running CSFD scraping, TMDB ingestion and person enrichment jobs. Celery beat can schedule periodic CSFD crawls through these environment variables:
+
+- `SCRAPE_SCHEDULE_MINUTES` (`0` disables scheduling)
+- `SCRAPE_SCHEDULE_FROM_PAGE`
+- `SCRAPE_SCHEDULE_MAX_PAGES`
+- `SCRAPE_SCHEDULE_MAX_FILMS`
+- `SCRAPE_SCHEDULE_INCLUDE_PEOPLE`
+- `SCRAPE_SCHEDULE_INCLUDE_MOVIES`
+- `SCRAPE_PARALLEL_CHUNKS`
+
+Useful logs:
+
+```bash
+docker compose logs --tail=200 api
+docker compose logs --tail=200 worker
+docker compose logs --tail=200 beat
+docker compose logs --tail=200 dashboard
 ```
 
-- `GET /api/v1/people?limit=1`
-  - Returns people with computed `film_count` and linked `films` entries.
+## Testing
 
-Example response item:
-
-```json
-{
-  "id": 3571,
-  "name": "Soon Yi Previn",
-  "occupation": "Actor",
-  "url": "https://www.csfd.sk/tvorca/587986-soon-yi-previn/",
-  "birth_date": null,
-  "film_count": 0,
-  "films": []
-}
-```
-
-### Analytics overview endpoint
-
-- `GET /api/v1/analytics/overview?limit=5` aggregates crawl results:
-  - `total_films` / `total_people` give collection sizes.
-  - `top_actors` and `top_directors` return the most prolific people (by film count) for their roles.
-  - `prolific_countries` highlight countries with the highest number of films in the database.
-- Adjust `limit` (1–20) to control how many entries each list contains.
-
-### Additional analytics endpoints
-
-- `GET /api/v1/analytics/people?roles=actor&roles=director&limit=5&min_films=1`
-  - Query multiple roles (default actor+director) and see the most prolific people per role.
-  - `limit` (1–30) caps how many people each role returns; `min_films` filters out lightly credited entries.
-- `GET /api/v1/analytics/countries?limit=10`
-  - Returns the busiest production countries plus their share of the total film catalog.
-- `GET /api/v1/analytics/releases?bucket=decade&limit=12`
-  - Summarizes how many films were released per year or decade (use `bucket=year` for yearly breakdowns).
-- `GET /api/v1/analytics/network/collaboration?limit_nodes=10&limit_edges=10&min_shared_films=2`
-  - Computes a NetworkX-powered collaboration graph: returns graph stats, the most central creators, and
-    the strongest partnerships (weighted by shared films).
-
-### Streamlit dashboard
-
-- Already runs as part of `docker compose up` (see http://localhost:8501).
-- For standalone use, install dependencies (`pip install -r requirements.txt`), set `SCRAPOO_API_URL`
-  if needed (default `http://localhost:8000/api/v1`), then run `streamlit run dashboard/streamlit_app.py`.
-- The UI surfaces the same analytics (overview, roles, countries, releases, collaboration graph) with Plotly charts
-  plus an interactive PyVis-powered network visualization of the strongest collaborations.
-
-### Testing (FastAPI stack only)
-
-To run a clean test flow that excludes legacy Django tests, execute inside the API container:
+Run the FastAPI test stack inside the API container:
 
 ```bash
 docker compose exec -T api sh scripts/test_fastapi_stack.sh
 ```
 
-This runs:
+Or run individual tests:
 
-- `app.tests.test_api_smoke` (FastAPI endpoint smoke tests)
-- `app.tests.test_e2e_functional_requirements` (end-to-end functional requirement tests)
+```bash
+docker compose exec -T api python -m unittest app.tests.test_api_smoke
+docker compose exec -T api python -m unittest app.tests.test_graph_analytics_controlled_datasets
+docker compose exec -T api python -m unittest app.tests.test_e2e_functional_requirements
+```
 
-It intentionally does not run `scraper/tests.py` (legacy Django test module).
+## License
 
-License
-
-- MIT-style: use in your research, cite as needed.
+MIT-style: use in your research, cite as needed.
