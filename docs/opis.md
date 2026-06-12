@@ -101,6 +101,19 @@ TMDB integrácia je oddelená od ČSFD v troch rovinách:
 Toto oddelenie umožňuje používať rovnaký dátový model a analytické algoritmy, ale zároveň zachovať pôvod dát. V
 dashboarde je možné prepínať medzi zdrojmi ČSFD a TMDB.
 
+### Aktuálny stav datasetov
+
+Aktuálne počty boli odčítané z lokálne bežiacich Docker PostgreSQL databáz dňa 12. 6. 2026. Primárna databáza ČSFD
+obsahovala 3 015 filmov a 27 024 osôb. Samostatná databáza TMDB obsahovala 10 003 filmov a 193 485 osôb.
+
+| Zdroj | Filmy | Osoby | Žánre | Krajiny | Väzby film-osoba | Väzby film-žáner |
+|---|---:|---:|---:|---:|---:|---:|
+| ČSFD | 3 015 | 27 024 | 19 | 52 | 61 323 | 5 049 |
+| TMDB | 10 003 | 193 485 | 33 | 80 | 354 854 | 25 469 |
+
+Tieto hodnoty predstavujú stav lokálnej databázy v čase merania, nie konštantnú vlastnosť systému. Pri ďalšom spustení
+scrapingu alebo importu sa môžu zmeniť.
+
 ## Dátový model
 
 Dátový model je relačný a je implementovaný pomocou Tortoise ORM. Hlavné entity sú:

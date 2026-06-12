@@ -47,12 +47,11 @@ Overovane metriky:
 
 | Scenar | Filmy a obsadenie | Uzly | Hrany | Hustota | Priemerny stupen | Najvacsia komponenta | Clustering | Tranzitivita | Diameter | Priemerna cesta | Max core | Vahy hran |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Prazdny graf | ziadne filmy | 0 | 0 | 0 | 0 | 0 | 0 | 0 | null | null | 0 | [] |
-| Jedna hrana | AB | 2 | 1 | 1 | 1 | 2 | 0 | 0 | 1 | 1 | 1 | [1] |
-| Retaz troch hercov | AB, BC | 3 | 2 | 2/3 | 4/3 | 3 | 0 | 0 | 2 | 4/3 | 1 | [1, 1] |
-| Trojuholnik | ABC | 3 | 3 | 1 | 2 | 3 | 1 | 1 | 1 | 1 | 2 | [1, 1, 1] |
-| Dve komponenty | AB, CD | 4 | 2 | 1/3 | 1 | 2 | 0 | 0 | 1 | 1 | 1 | [1, 1] |
-| Opakovana spolupraca | AB, AB | 2 | 1 | 1 | 1 | 2 | 0 | 0 | 1 | 1 | 1 | [2] |
+| Cesta troch hercov P3 | AB, BC | 3 | 2 | 2/3 | 4/3 | 3 | 0 | 0 | 2 | 4/3 | 1 | [1, 1] |
+| Dva trojuholniky spojene hranou | ABC, BCD | 4 | 5 | 5/6 | 5/2 | 4 | 5/6 | 3/4 | 2 | 7/6 | 2 | [1, 1, 1, 1, 2] |
+| Cyklus C5 | AB, BC, CD, DE, EA | 5 | 5 | 1/2 | 2 | 5 | 0 | 0 | 2 | 3/2 | 2 | [1, 1, 1, 1, 1] |
+| Kompletny graf K5 | ABCDE | 5 | 10 | 1 | 4 | 5 | 1 | 1 | 1 | 1 | 4 | 10x [1] |
+| Kompletny bipartitny graf K2,3 | AC, AD, AE, BC, BD, BE | 5 | 6 | 3/5 | 12/5 | 5 | 0 | 0 | 2 | 7/5 | 2 | 6x [1] |
 
 ## Spustenie
 
@@ -71,6 +70,9 @@ docker compose exec -T api python -m unittest app.tests.test_graph_analytics_con
 Overeny vysledok:
 
 ```text
-Ran 13 tests in 0.467s
+Ran 5 tests in 0.223s
+OK
+
+Ran 12 tests in 0.676s
 OK
 ```

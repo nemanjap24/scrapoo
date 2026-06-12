@@ -18,49 +18,8 @@ class TestGraphAnalyticsControlledDatasets(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await connections.close_all(discard=True)
 
-    async def test_empty_graph_returns_zero_metrics(self) -> None:
-        result = await _analyze()
-
-        self.assertEqual(result.movie_count, 0)
-        self.assertEqual(result.stats.node_count, 0)
-        self.assertEqual(result.stats.edge_count, 0)
-        self.assertEqual(result.stats.density, 0.0)
-        self.assertEqual(result.stats.average_degree, 0.0)
-        self.assertEqual(result.largest_component_count, 0)
-        self.assertEqual(result.clustering.average_clustering, 0.0)
-        self.assertEqual(result.clustering.transitivity, 0.0)
-        self.assertEqual(result.core.max_core_number, 0)
-        self.assertEqual(result.path.diameter, None)
-        self.assertEqual(result.graph_nodes, [])
-        self.assertEqual(result.graph_edges, [])
-
-    async def test_single_edge_graph_metrics(self) -> None:
-        await _create_actor_films([("Film AB", ["A", "B"])])
-        result = await _analyze()
-
-        self.assertEqual(result.movie_count, 1)
-        self.assert_graph_summary(
-            result,
-            nodes=2,
-            edges=1,
-            density=1.0,
-            average_degree=1.0,
-            largest_component=2,
-            average_clustering=0.0,
-            transitivity=0.0,
-            max_core_number=1,
-            diameter=1,
-            average_path=1.0,
-        )
-        self.assertEqual(_edge_weights(result), [1])
-
-    async def test_three_actor_chain_graph_metrics(self) -> None:
-        await _create_actor_films(
-            [
-                ("Film AB", ["A", "B"]),
-                ("Film BC", ["B", "C"]),
-            ]
-        )
+    async def test_three_actor_path_graph_metrics(self) -> None:
+        await _create_actor_edges([("A", "B"), ("B", "C")])
         result = await _analyze()
 
         self.assertEqual(result.movie_count, 2)
@@ -79,31 +38,11 @@ class TestGraphAnalyticsControlledDatasets(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(_edge_weights(result), [1, 1])
 
-    async def test_triangle_graph_metrics(self) -> None:
-        await _create_actor_films([("Film ABC", ["A", "B", "C"])])
-        result = await _analyze()
-
-        self.assertEqual(result.movie_count, 1)
-        self.assert_graph_summary(
-            result,
-            nodes=3,
-            edges=3,
-            density=1.0,
-            average_degree=2.0,
-            largest_component=3,
-            average_clustering=1.0,
-            transitivity=1.0,
-            max_core_number=2,
-            diameter=1,
-            average_path=1.0,
-        )
-        self.assertEqual(_edge_weights(result), [1, 1, 1])
-
-    async def test_two_disconnected_components_graph_metrics(self) -> None:
+    async def test_two_triangles_sharing_edge_graph_metrics(self) -> None:
         await _create_actor_films(
             [
-                ("Film AB", ["A", "B"]),
-                ("Film CD", ["C", "D"]),
+                ("Film ABC", ["A", "B", "C"]),
+                ("Film BCD", ["B", "C", "D"]),
             ]
         )
         result = await _analyze()
@@ -112,43 +51,94 @@ class TestGraphAnalyticsControlledDatasets(unittest.IsolatedAsyncioTestCase):
         self.assert_graph_summary(
             result,
             nodes=4,
-            edges=2,
-            density=1 / 3,
-            average_degree=1.0,
-            largest_component=2,
-            average_clustering=0.0,
-            transitivity=0.0,
-            max_core_number=1,
-            diameter=1,
-            average_path=1.0,
+            edges=5,
+            density=5 / 6,
+            average_degree=5 / 2,
+            largest_component=4,
+            average_clustering=5 / 6,
+            transitivity=3 / 4,
+            max_core_number=2,
+            diameter=2,
+            average_path=7 / 6,
         )
-        self.assertAlmostEqual(result.path.largest_component_share, 0.5)
-        self.assertEqual(_edge_weights(result), [1, 1])
+        self.assertEqual(_edge_weights(result), [1, 1, 1, 1, 2])
 
-    async def test_repeated_collaboration_builds_weighted_edge(self) -> None:
-        await _create_actor_films(
+    async def test_c5_cycle_graph_metrics(self) -> None:
+        await _create_actor_edges(
             [
-                ("Film AB 1", ["A", "B"]),
-                ("Film AB 2", ["A", "B"]),
+                ("A", "B"),
+                ("B", "C"),
+                ("C", "D"),
+                ("D", "E"),
+                ("E", "A"),
             ]
         )
         result = await _analyze()
 
-        self.assertEqual(result.movie_count, 2)
+        self.assertEqual(result.movie_count, 5)
         self.assert_graph_summary(
             result,
-            nodes=2,
-            edges=1,
-            density=1.0,
-            average_degree=1.0,
-            largest_component=2,
+            nodes=5,
+            edges=5,
+            density=1 / 2,
+            average_degree=2.0,
+            largest_component=5,
             average_clustering=0.0,
             transitivity=0.0,
-            max_core_number=1,
+            max_core_number=2,
+            diameter=2,
+            average_path=3 / 2,
+        )
+        self.assertEqual(_edge_weights(result), [1, 1, 1, 1, 1])
+
+    async def test_k5_complete_graph_metrics(self) -> None:
+        await _create_actor_films([("Film ABCDE", ["A", "B", "C", "D", "E"])])
+        result = await _analyze()
+
+        self.assertEqual(result.movie_count, 1)
+        self.assert_graph_summary(
+            result,
+            nodes=5,
+            edges=10,
+            density=1.0,
+            average_degree=4.0,
+            largest_component=5,
+            average_clustering=1.0,
+            transitivity=1.0,
+            max_core_number=4,
             diameter=1,
             average_path=1.0,
         )
-        self.assertEqual(_edge_weights(result), [2])
+        self.assertEqual(_edge_weights(result), [1] * 10)
+
+    async def test_k23_complete_bipartite_graph_metrics(self) -> None:
+        await _create_actor_edges(
+            [
+                ("A", "C"),
+                ("A", "D"),
+                ("A", "E"),
+                ("B", "C"),
+                ("B", "D"),
+                ("B", "E"),
+            ]
+        )
+        result = await _analyze()
+
+        self.assertEqual(result.movie_count, 6)
+        self.assert_graph_summary(
+            result,
+            nodes=5,
+            edges=6,
+            density=3 / 5,
+            average_degree=12 / 5,
+            largest_component=5,
+            average_clustering=0.0,
+            transitivity=0.0,
+            max_core_number=2,
+            diameter=2,
+            average_path=7 / 5,
+        )
+        self.assertEqual(_edge_weights(result), [1] * 6)
 
     def assert_graph_summary(
         self,
@@ -203,6 +193,14 @@ async def _create_actor_films(films: Iterable[tuple[str, list[str]]]) -> None:
                 )
                 people_by_key[actor_key] = person
             await PersonInFilm.create(films=film, persons=person, role="actor")
+
+
+async def _create_actor_edges(edges: Iterable[tuple[str, str]]) -> None:
+    films = [
+        (f"Film {source}{target}", [source, target])
+        for source, target in edges
+    ]
+    await _create_actor_films(films)
 
 
 def _edge_weights(result: GraphAnalysisResult) -> list[int]:

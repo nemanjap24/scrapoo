@@ -99,7 +99,7 @@ Samostatny benchmark skript je dostupny v `scripts/benchmark_graph_analytics.py`
 
 Benchmark nezbiera realne data z CSFD. Namiesto toho generuje synteticke data, aby bolo meranie opakovatelne a nezavisle od dostupnosti externej stranky, sietovej latencie alebo anti-bot ochrany. Pre kazdy film vytvara aj umele osoby: dvoch hercov a jedneho rezisera. Tieto osoby sa ukladaju do tabulky `person` a vztahy medzi filmami a osobami sa ukladaju do tabulky `person_in_film`. Grafova analyza teda pracuje nad realne vytvorenymi databazovymi vztahmi, nie nad mockovanym vysledkom.
 
-Predvolene je dataset redsi, aby benchmark dobehol rychlo. Pre realistickejsie meranie je mozne nastavit viac hercov na film alebo priamo cielovy pocet osob. Napriklad pri 10 000 filmoch a priblizne 193 000 osobach:
+Predvolene je dataset redsi, aby benchmark dobehol rychlo. Pre realistickejsie meranie je mozne nastavit viac hercov na film alebo priamo cielovy pocet osob. Aktualny TMDB dataset v lokalnej Docker databaze mal 12. 6. 2026 spolu 10 003 filmov a 193 485 osob. Napriklad pri 10 000 filmoch a priblizne 193 000 osobach:
 
 ```bash
 docker compose exec -T api python scripts/benchmark_graph_analytics.py \
