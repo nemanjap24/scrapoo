@@ -111,7 +111,6 @@ Dátový model je relačný a je implementovaný pomocou Tortoise ORM. Hlavné e
 - **Genre** - reprezentuje filmový žáner.
 - **PersonInFilm** - prepájacia tabuľka medzi filmom a osobou. Uchováva aj rolu osoby vo filme, napríklad `actor` alebo
   `director`.
-- **MovieLink** - pomocná entita na evidenciu filmových URL adries a ich stavu.
 
 Vzťah medzi filmom a osobou je najdôležitejším prvkom modelu pre následnú grafovú analýzu. Z relačných údajov je možné
 vytvoriť napríklad bipartitný graf filmov a osôb alebo projekčný graf hercov, v ktorom sú dvaja herci spojení hranou,

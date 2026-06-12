@@ -37,13 +37,6 @@ entity "Person" as Person {
   url
 }
 
-entity "MovieLink" as MovieLink {
-  * id
-  --
-  url
-  status
-}
-
 entity "PersonInFilm" as PersonInFilm {
   * id
   --

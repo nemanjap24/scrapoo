@@ -852,14 +852,13 @@ async def _ensure_url_column_capacity(target_length: int) -> None:
     table_columns = {
         "film": ("url",),
         "person": ("url",),
-        "movie_link": ("url",),
     }
     try:
         rows = await conn.execute_query_dict(
             """
             SELECT table_name, column_name, character_maximum_length
             FROM information_schema.columns
-            WHERE table_name IN ('film', 'person', 'movie_link')
+            WHERE table_name IN ('film', 'person')
               AND column_name = 'url'
             """
         )

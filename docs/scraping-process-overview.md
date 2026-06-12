@@ -235,8 +235,8 @@ Person persistence:
 6. Sitemap expansion is only one level deep.
    `resolve_sitemaps()` reads locations from the configured index. `expand_sitemaps()` then expects those selected URLs to contain film page URLs. If a selected URL is itself another sitemap index, the current production flow will not recursively expand it.
 
-7. URL columns are short for real web URLs.
-   `Film.url`, `Person.url`, and `MovieLink.url` are `CharField(max_length=100)`. CSFD film/person URLs can exceed this. The code expands title column capacity at runtime but does not do the same for URL columns.
+7. URL columns depend on runtime capacity checks.
+   `Film.url` and `Person.url` are defined as `CharField(max_length=255)`, and the scrape pipeline checks URL column capacity at runtime. CSFD film/person URLs should still be monitored because canonical URLs are used as lookup keys.
 
 8. `Film.update_or_create(url=...)` relies on a non-unique field.
    The model does not declare `Film.url` as unique. If duplicate rows already exist or concurrent tasks persist the same URL, update-or-create behavior may be ambiguous or race-prone.

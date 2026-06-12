@@ -138,6 +138,118 @@ Namerane hodnoty:
 
 Z vysledkov vidno, ze ukladanie dat rastie pomerne rovnomerne s poctom filmov. Pri grafovej analyze je narast vyraznejsi, najma pri vacsich datasetoch. Je to ocakavane, pretoze vypocet hereckej projekcie pracuje s grafovou strukturou a pri vacsom pocte uzlov a hran vykonava narocnejsie sietove metriky. Tieto vysledky je vhodne interpretovat ako benchmark nad syntetickymi datami v SQLite prostredi; pre produkcne meranie by bolo vhodne zopakovat test aj nad PostgreSQL databazou.
 
+Benchmark bol spusteny na macbook pro m1 13inch 8gb RAM (2020):
+
+
+A. Riedky / kontrolovaný benchmark
+Ukazuje, ako sa systém správa pri rastúcom počte filmov, ale s menším počtom unikátnych osôb.
+```sh
+% docker compose exec -T api python scripts/benchmark_graph_analytics.py \
+  --sizes 100 1000 5000 \
+  --runs 3 \
+  --actors-per-film 19 \
+  --directors-per-film 1 \
+  --actor-strategy chain \
+  --markdown
+```
+
+| Films | Runs | Avg actors/film | Directors/film | Strategy | Target people | Avg people | Avg relations | Avg persist (s) | Avg analysis (s) | Avg films/s | Avg nodes | Avg edges |
+| ----: | ---: | --------------: | -------------: | -------- | ------------: | ---------: | ------------: | --------------: | ---------------: | ----------: | --------: | --------: |
+|   100 |    3 |           19.00 |              1 | chain    |               |      218.0 |        2000.0 |          1.4356 |           0.2380 |       69.66 |     118.0 |    1953.0 |
+|  1000 |    3 |           19.00 |              1 | chain    |               |     2018.0 |       20000.0 |         15.2474 |          15.8613 |       65.63 |    1018.0 |   18153.0 |
+|  5000 |    3 |           19.00 |              1 | chain    |               |    10018.0 |      100000.0 |         98.1663 |         461.6269 |       50.98 |    5018.0 |   90153.0 |
+
+B. Realistickejší záťažový benchmark
+```sh
+docker compose exec -T api python scripts/benchmark_graph_analytics.py \
+  --sizes 100 500 1000 5000 10000 \
+  --runs 2 \
+  --actors-per-film 19 \
+  --directors-per-film 1 \
+  --actor-strategy unique \
+  --markdown
+```
+ 
+| Films | Runs | Avg actors/film | Directors/film | Strategy | Target people | Avg people | Avg relations | Avg persist (s) | Avg analysis (s) | Avg films/s | Avg nodes | Avg edges |
+| ----: | ---: | --------------: | -------------: | -------- | ------------: | ---------: | ------------: | --------------: | ---------------: | ----------: | --------: | --------: |
+|   100 |    2 |           19.00 |              1 | unique   |               |     2000.0 |        2000.0 |          2.0346 |           0.2099 |       49.15 |    1900.0 |   17100.0 |
+|   500 |    2 |           19.00 |              1 | unique   |               |    10000.0 |       10000.0 |         11.6195 |           1.0146 |       43.03 |    9500.0 |   85500.0 |
+|  1000 |    2 |           19.00 |              1 | unique   |               |    20000.0 |       20000.0 |         27.2373 |           1.9927 |       36.71 |   19000.0 |  171000.0 |
+|  5000 |    2 |           19.00 |              1 | unique   |               |   100000.0 |      100000.0 |        310.5959 |          12.0103 |       16.10 |   95000.0 |  855000.0 |
+| 10000 |    2 |           19.00 |              1 | unique   |               |   200000.0 |      200000.0 |       1423.5887 |          28.0008 |        7.07 |  190000.0 | 1710000.0 |
+
+Ukazuje, čo sa deje, keď počet osôb a hrán narastie podobne ako v tvojej reálnej databáze.
+
+Najviac realistický kompromis by bol podľa mňa pool, lebo reálni herci sa opakujú vo viacerých filmoch.
+C. Pool
+```sh
+% docker compose exec -T api python scripts/benchmark_graph_analytics.py \
+  --sizes 100 1000 5000 \
+  --runs 3 \
+  --actors-per-film 19 \
+  --directors-per-film 1 \
+  --actor-strategy pool \
+  --actor-pool-size 50000 \
+  --markdown
+```
+
+| Films | Runs | Avg actors/film | Directors/film | Strategy | Target people | Avg people | Avg relations | Avg persist (s) | Avg analysis (s) | Avg films/s | Avg nodes | Avg edges |
+| ----: | ---: | --------------: | -------------: | -------- | ------------: | ---------: | ------------: | --------------: | ---------------: | ----------: | --------: | --------: |
+|   100 |    1 |           19.00 |              1 | pool     |               |     2000.0 |        2000.0 |          1.7007 |           0.2238 |       58.80 |    1900.0 |   17100.0 |
+|  1000 |    1 |           19.00 |              1 | pool     |               |    20000.0 |       20000.0 |         27.2577 |           1.9126 |       36.69 |   19000.0 |  171000.0 |
+|  5000 |    1 |           19.00 |              1 | pool     |               |    55000.0 |      100000.0 |        241.3979 |          15.5936 |       20.71 |   50000.0 |  658428.0 |
+
+Opis druhov testov:
+1. chain
+
+Toto je default.
+
+--actor-strategy chain
+Herci sa medzi susednými filmami prekrývajú. Napríklad film 1 má hercov 1,2,3, film 2 má 2,3,4, film 3 má 3,4,5.
+
+Výsledok:
+
+menej unikátnych osôb,
+graf je prepojenejší,
+vhodné na rýchlejší benchmark grafovej štruktúry,
+nie je veľmi realistické pre veľký filmový dataset.
+2. unique
+
+--actor-strategy unique
+Každý film má vlastnú sadu hercov.
+
+Výsledok:
+
+veľa unikátnych osôb,
+každý film vytvorí samostatnú kliku hercov,
+dobré na záťažový test veľkého počtu osôb a hrán,
+vhodné, ak chceš simulovať stav typu 10000 filmov -> ~193000 osôb.
+Toto je najbližšie k tvojmu aktuálnemu cieľu, ak riešiš veľký počet osôb.
+
+3. pool
+
+--actor-strategy pool --actor-pool-size 5000
+Herci sa vyberajú z obmedzeného poolu. Napríklad máš 10 000 filmov, ale iba 5 000 možných hercov, ktorí sa opakovane používajú.
+
+Výsledok:
+
+realistickejšie opakovanie známych hercov,
+menej unikátnych osôb než unique,
+graf je viac prepojený,
+môže lepšie simulovať reálne filmové dáta.
+Príklad:
+
+docker compose exec -T api python scripts/benchmark_graph_analytics.py \
+  --sizes 100 500 1000 5000 \
+  --runs 1 \
+  --actors-per-film 19 \
+  --directors-per-film 1 \
+  --actor-strategy pool \
+  --actor-pool-size 20000 \
+  --markdown
+
+
+
 ## Ako spustit testy
 
 Testy sa spustaju cez pripraveny skript:

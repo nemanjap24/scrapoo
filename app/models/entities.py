@@ -81,12 +81,3 @@ class PersonInFilm(models.Model):
     class Meta:
         table = "person_in_film"
         unique_together = (("films", "persons"),)
-
-
-class MovieLink(models.Model):
-    id = fields.IntField(pk=True)
-    url = fields.CharField(max_length=255, null=True)
-    status = fields.CharField(max_length=15, null=True)
-
-    class Meta:
-        table = "movie_link"
